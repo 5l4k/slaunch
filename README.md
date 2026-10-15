@@ -4,6 +4,8 @@
 
 <img width="1280" height="720" alt="2026092401121200-A082AE4E5DA891D87084ACEACFDFF4A9" src="https://github.com/user-attachments/assets/fc5fcfc0-1348-454c-a057-2459c590818a" />
 
+### PLEASE DISABLE ANY SYSMODULES BEFORE REPORTING AN ISSUE
+
 ## Features
 
 * **Theming & Customization:** Supports 5 built-in themes, custom user wallpapers, icon packs, custom fonts, and several UI modes. Includes layout tuning and customizable tile sizes/colors.
