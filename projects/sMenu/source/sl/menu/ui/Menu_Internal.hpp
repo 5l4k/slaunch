@@ -31,7 +31,7 @@ namespace sl::menu::ui {
            TH_Hints, TH_Counter, TH_RetroArch, TH_Shortcuts, TH_Fonts,
            TH_Language, TH_Music,
            TH_Widgets, TH_Entries,
-           TH_Sleep, TH_SleepTv,
+           TH_Sleep, TH_SleepTv, TH_AskUser,
            TH_Welcome, TH_Updates,
            TH_About, TH_Back, TH_Count };
 
@@ -107,6 +107,7 @@ namespace sl::menu::ui {
         { ItemKind::WebBrowser,   "Web Browser"   },
         { ItemKind::MiiEdit,      "Mii Edit"      },
         { ItemKind::Wifi,         "Network"       },
+        { ItemKind::Bluetooth,    "Bluetooth"     },
         { ItemKind::Power,        "Power"         },
         { ItemKind::HomebrewMenu, "Homebrew menu" },
         { ItemKind::FileManager,  "Files"         },
@@ -129,6 +130,9 @@ namespace sl::menu::ui {
     // currently rendering in. They are not run through T() for the same
     // reason - "Russian" should read the same however you got here.
     struct LangOption { const char *code; const char *name; };
+    // Written once the system-module warning has been shown (setup or notice).
+    inline constexpr const char *kSysmodNoticePath = "sdmc:/slaunch/config/sysmodule_notice";
+
     inline const LangOption kLangs[] = {
         { "auto", nullptr     },   // name filled in from T("Automatic")
         { "en",   "English"   },
@@ -138,6 +142,8 @@ namespace sl::menu::ui {
         { "ru",   "Russian"   },
         { "ja",   "Japanese"  },
         { "zh",   "Chinese"   },
+        { "pt",   "Portuguese" },
+        { "tr",   "Turkish"   },
     };
     inline constexpr int kLangN = (int)(sizeof(kLangs) / sizeof(kLangs[0]));
 
@@ -665,6 +671,12 @@ namespace sl::menu::ui {
         struct LogLine { bool head; const char *text; };
         // Newest first. Headers are version tags; the rest are one-line summaries.
         inline const LogLine kChangelog[] = {
+            { true,  "v1.5.4" },
+            { false, "Bluetooth settings: turn the radio on or off, pair and connect headphones and speakers" },
+            { false, "Optional: choose who plays when you launch a game (Theming > Ask who's playing)" },
+            { false, "Fixed a crash after downloading lots of covers" },
+            { false, "Portuguese and Turkish translations, and every screen can now be translated" },
+            { false, "Setup warns about system modules, the most common cause of crashes" },
             { true,  "v1.5.3" },
             { false, "Works on system update 23.0.1 (built for Atmosphere 1.12.0)" },
             { true,  "v1.5.2" },

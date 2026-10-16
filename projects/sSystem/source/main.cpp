@@ -330,17 +330,85 @@ static void EnsureUser() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// qlaunch-only applet messages that libnx's AppletMessage_ enum omits (only the
+// system applet receives them). Values from Horizon `am` / uLaunch.
+enum SystemAppletMessage : u32 {
+    Msg_DetectShortPressingHomeButton  = 20,
+    Msg_DetectShortPressingPowerButton = 22,
+    Msg_FinishedSleepSequence          = 26,
+    Msg_AutoPowerDown                  = 29,
+    Msg_SdCardRemoved                  = 33,
+};
+
+// The system's own "who's playing" screen (the player select applet). False
+// when it was cancelled or could not be shown.
+static bool PickUser(AccountUid &out) {
+    AppletHolder sel;
+    if (R_FAILED(appletCreateLibraryApplet(&sel, AppletId_LibraryAppletPlayerSelect,
+                                           LibAppletMode_AllForeground)))
+        return false;
+    LibAppletArgs args;
+    libappletArgsCreate(&args, 0);
+    libappletArgsPush(&args, &sel);
+    appletHolderStart(&sel);
+    // The daemon is the HOME Menu, so while this screen is up it is the one
+    // that receives power and idle messages. Waiting here without reading
+    // them left an auto-sleep (or the power button) unanswered for as long
+    // as nobody picked a user.
+    while (!appletHolderCheckFinished(&sel)) {
+        u32 msg = 0;
+        while (R_SUCCEEDED(appletGetMessage(&msg))) {
+            if (msg == Msg_DetectShortPressingPowerButton || msg == Msg_AutoPowerDown) {
+                DaemonLog("power: %s during player select -> sleep",
+                          msg == Msg_AutoPowerDown ? "auto power down" : "power button");
+                if (const Result rc = pwr::Sleep(); R_FAILED(rc))
+                    DaemonLog("power: sleep request refused rc=0x%x", rc);
+            } else if (msg == Msg_FinishedSleepSequence) {
+                DaemonLog("power: woke up");
+            }
+        }
+        svcSleepThread(16'666'666ULL);
+    }
+    struct { u64 result; AccountUid uid; } res = {};
+    libappletPopOutData(&sel, &res, sizeof(res), nullptr);
+    appletHolderClose(&sel);
+    if (res.result != 0 || !accountUidIsValid(&res.uid)) return false;
+    out = res.uid;
+    return true;
+}
+
+// Theming > "Ask who's playing": like the stock HOME Menu, launching a game
+// shows the player select screen first instead of using the menu's user.
+// A file rather than SMI so the menu can change it without a protocol bump.
+static constexpr const char *kAskUserPath = "sdmc:/slaunch/config/ask_user";
+static bool ShouldAskUser(u64 app_id) {
+    struct stat st;
+    if (stat(kAskUserPath, &st) != 0) return false;
+    s32 n = 0;
+    AccountUid uids[ACC_USER_LIST_SIZE];
+    if (R_FAILED(accountListAllUsers(uids, ACC_USER_LIST_SIZE, &n)) || n < 2) return false;
+    return app::WantsUser(app_id);   // games that pick their own players are left alone
+}
+
 static void RunPendingAction() {
     const Pending p = g_Pending;
     g_Pending = Pending::None;
     EnsureSdMounted();
 
     switch (p) {
-        case Pending::LaunchApp:
+        case Pending::LaunchApp: {
             EnsureUser();
+            // Picked for this launch only; the menu keeps its own user.
+            AccountUid player = g_SelectedUser;
+            if (ShouldAskUser(g_PendingAppId) && !PickUser(player)) {
+                DaemonLog("app: launch 0x%016lx cancelled at player select", g_PendingAppId);
+                LaunchMenu();
+                break;
+            }
             if (app::g_AppRunning) app::Terminate();
             CleanupHbOverride();   // dropping an override before a normal launch
-            if (const Result rc = app::Launch(g_PendingAppId, g_SelectedUser); R_FAILED(rc)) {
+            if (const Result rc = app::Launch(g_PendingAppId, player); R_FAILED(rc)) {
                 DaemonLog("app: launch 0x%016lx failed rc=0x%x", g_PendingAppId, rc);
                 if (app::IsNoSpace(rc)) WritePowerError(kNoSpaceMsg);
                 LaunchMenu(); // launch failed -> back to the menu
@@ -348,6 +416,7 @@ static void RunPendingAction() {
                 DaemonLog("app: launched 0x%016lx", g_PendingAppId);
             }
             break;
+        }
         case Pending::ResumeApp:
             if (app::g_AppRunning) app::Resume();
             else                   LaunchMenu();
@@ -577,16 +646,6 @@ static void DrainSMIQueue() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// qlaunch-only applet messages that libnx's AppletMessage_ enum omits (only the
-// system applet receives them). Values from Horizon `am` / uLaunch.
-enum SystemAppletMessage : u32 {
-    Msg_DetectShortPressingHomeButton  = 20,
-    Msg_DetectShortPressingPowerButton = 22,
-    Msg_FinishedSleepSequence          = 26,
-    Msg_AutoPowerDown                  = 29,
-    Msg_SdCardRemoved                  = 33,
-};
 
 // The SD card was physically removed while the console is on. Everything sMenu
 // and the daemon serve lives on that card (ECS overrides read straight from it),
@@ -953,22 +1012,8 @@ namespace ams {
 
         accountGetPreselectedUser(&g_SelectedUser);
         if (!accountUidIsValid(&g_SelectedUser)) {
-            AppletHolder sel;
-            if (R_SUCCEEDED(appletCreateLibraryApplet(
-                    &sel, AppletId_LibraryAppletPlayerSelect,
-                    LibAppletMode_AllForeground))) {
-                LibAppletArgs args;
-                libappletArgsCreate(&args, 0);
-                libappletArgsPush(&args, &sel);
-                appletHolderStart(&sel);
-                while (!appletHolderCheckFinished(&sel))
-                    svcSleepThread(16'666'666ULL);
-                struct { u64 result; AccountUid uid; } out = {};
-                libappletPopOutData(&sel, &out, sizeof(out), nullptr);
-                if (accountUidIsValid(&out.uid))
-                    g_SelectedUser = out.uid;
-                appletHolderClose(&sel);
-            }
+            AccountUid picked;
+            if (PickUser(picked)) g_SelectedUser = picked;
         }
 
         // Before the menu, so a request left behind by a crash or a power cut

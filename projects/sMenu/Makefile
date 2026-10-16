@@ -80,7 +80,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 
 APP_TITLE   := sMenu
 APP_AUTHOR  := etonedemid
-APP_VERSION := 1.5.3
+APP_VERSION := 1.5.4
 
 #---------------------------------------------------------------------------------
 ARCH     := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
@@ -165,8 +165,8 @@ CPPFILES := $(foreach dir,$(SOURCES),$(wildcard $(dir)/*.cpp))
 # with their own flags (sysmodule specs here, libnx applet specs there), and
 # each linked whichever object the other had written last. That is a menu
 # object inside the daemon, or the reverse, decided by build order.
-# Atmosphère's MTP server (libs/haze). Built as it is upstream: C++23 and
-# Atmosphère's libvapours headers, from the same checkout sSystem builds
+# Atmosphere's MTP server (libs/haze). Built as it is upstream: C++23 and
+# Atmosphere's libvapours headers, from the same checkout sSystem builds
 # libstratosphere from. Objects under build/haze/ for the reason given above.
 ATMOSPHERE_DIR ?= /opt/atmosphere
 HAZE_SRC   := $(wildcard ../../libs/haze/source/*.cpp)

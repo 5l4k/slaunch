@@ -183,6 +183,8 @@ namespace sl::menu::ui {
                         cursor = &m_sys_cursor;       rows = kSysEntryN; break;
                     case Screen::Network:
                         cursor = &m_net_cursor;       rows = NET_Count; break;
+                    case Screen::Bluetooth:
+                        cursor = &m_bt_cursor;        rows = BtRowCount(); break;
                     case Screen::Power:
                         cursor = &m_power_cursor;     rows = (int)m_power_rows.size(); break;
                     case Screen::Payloads:

@@ -465,6 +465,7 @@ namespace sl::menu::ui {
         add(ItemKind::WebBrowser,   T("Web Browser"));
         add(ItemKind::MiiEdit,      T("Mii Edit"));
         add(ItemKind::Wifi,         T("Network"));
+        add(ItemKind::Bluetooth,    T("Bluetooth"));
         add(ItemKind::Power,        T("Power"));
         add(ItemKind::HomebrewMenu, T("Homebrew menu"));
         add(ItemKind::FileManager,  T("Files"));
@@ -1038,6 +1039,7 @@ namespace sl::menu::ui {
             case Screen::Welcome:       a = OnButtonWelcome(b);       break;
             case Screen::SysEntries:    a = OnButtonSysEntries(b);    break;
             case Screen::Network:       a = OnButtonNetwork(b);       break;
+            case Screen::Bluetooth:     a = OnButtonBluetooth(b);     break;
             case Screen::CoverPicker:   a = OnButtonCoverPicker(b);   break;
             case Screen::Power:         a = OnButtonPower(b);         break;
             case Screen::Payloads:      a = OnButtonPayloads(b);      break;
@@ -1156,6 +1158,10 @@ namespace sl::menu::ui {
             case ItemKind::Wifi:
                 m_screen = Screen::Network; m_net_cursor = 0; m_sub_scroll = 0;
                 RefreshNetwork(true);
+                return Action::None;
+            case ItemKind::Bluetooth:
+                m_screen = Screen::Bluetooth; m_bt_cursor = 0; m_sub_scroll = 0;
+                RefreshBluetooth(true);
                 return Action::None;
             case ItemKind::Power:        EnterPower(); return Action::None;
         }
@@ -2351,6 +2357,10 @@ namespace sl::menu::ui {
         if (g_phase_done && !m_crash_checked && m_screen == Screen::Main &&
             m_dialog == Dialog::None && !m_options_open)
             CheckCrashReports();
+        // Then, once, the system-module notice - after any crash dialog closed.
+        else if (g_phase_done && m_crash_checked && !m_sysmod_checked && m_screen == Screen::Main &&
+                 m_dialog == Dialog::None && !m_options_open)
+            CheckSysmoduleNotice();
         // Warm the art cache once the menu has had a few seconds to itself.
         if (g_phase_done && !m_art_warm_queued && g_frame1_tick != 0 &&
             (armGetSystemTick() - g_frame1_tick) > armGetSystemTickFreq() * 3)
@@ -2434,6 +2444,7 @@ namespace sl::menu::ui {
             case Screen::Welcome:     DrawWelcome(); break;
             case Screen::SysEntries:  DrawSysEntries(); break;
             case Screen::Network:     DrawNetwork();    break;
+            case Screen::Bluetooth:   DrawBluetooth();  break;
             case Screen::CoverPicker: DrawCoverPicker(); break;
             case Screen::Power:       DrawPower(); break;
             case Screen::Payloads:    DrawPayloads(); break;
@@ -2736,6 +2747,7 @@ namespace sl::menu::ui {
             case ItemKind::MiiEdit:      file = "mii";          break;
             case ItemKind::Settings:     file = "settings";     break;
             case ItemKind::Wifi:         file = "wifi";         break;
+            case ItemKind::Bluetooth:    file = "bluetooth";    break;
             case ItemKind::Power:        file = "power";        break;
             case ItemKind::HomebrewMenu: file = "homebrewmenu"; break;
             case ItemKind::FileManager:  file = "filemanager";  break;

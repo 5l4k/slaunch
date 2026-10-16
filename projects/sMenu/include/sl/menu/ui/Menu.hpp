@@ -59,6 +59,7 @@ namespace sl::menu::ui {
         // which is also what ItemKey uses to tie the two together.
         WidgetTile,
         FileManager,   // browse and manage the SD card (Menu_Files.cpp)
+        Bluetooth,     // radio on/off and audio device pairing (Menu_Screens.cpp)
     };
 
     // What the box-art worker is doing (see Menu::DrawFetchStatus). Stages run
@@ -225,7 +226,7 @@ namespace sl::menu::ui {
         enum class Screen { Oobe, Welcome, Main, Theming, Themes, ThemeEditor, ColorPicker,
                             Fonts, Widgets, WidgetOptions, Keyboard, Music, Homebrew, About,
                             SysEntries, Power, Payloads, Album, FlowMenu, FlowSettings, Files,
-                            Network, CoverPicker,
+                            Network, CoverPicker, Bluetooth,
                             // Deck: its side menu, the full-library grid, and the
                             // reader a news card opens into.
                             DeckMenu, DeckLibrary, DeckNews };
@@ -271,6 +272,23 @@ namespace sl::menu::ui {
         // nifm answers over IPC, so the values are polled on a timer and cached
         // rather than read per frame.
         Action OnButtonNetwork(Btn b);
+        // Bluetooth: the radio, and pairing audio devices (headphones,
+        // speakers). Controllers pair through the Controllers entry.
+        struct BtDevice { BtdrvAddress addr; std::string name; bool connected = false; };
+        struct BtStatus {
+            bool ok = false;           // btm:sys available
+            bool audio = false;        // 13.0.0+: audio devices can be paired
+            bool radio = false, searching = false;
+            std::vector<BtDevice> paired, found;
+        };
+        BtStatus m_bt{};
+        int      m_bt_cursor = 0;
+        u64      m_bt_tick = 0;
+        bool     m_bt_init = false;
+        void   RefreshBluetooth(bool force);
+        int    BtRowCount() const;
+        void   DrawBluetooth();
+        Action OnButtonBluetooth(Btn b);
         void   DrawNetwork();
         void   RefreshNetwork(bool force);
         struct NetStatus {
@@ -1275,7 +1293,15 @@ namespace sl::menu::ui {
         float m_edit_scroll  = 0.0f; // animated scroll position for the editor
         int m_editing_theme  = -1; // global index of the custom theme being edited
         int m_oobe_step      = 0;
-        static constexpr int kOobeSteps = 5;
+        static constexpr int kOobeSteps = 6;
+        // System modules set to start at boot (atmosphere/contents/*/flags/
+        // boot2.flag), by name where they say one. Many hook into qlaunch and
+        // are the usual cause of crashes and freezes reported against sLaunch,
+        // so setup warns about them and existing installs get a one-time notice.
+        std::vector<std::string> BootModules();
+        std::vector<std::string> m_boot_modules;   // scanned when setup reaches the warning
+        bool m_sysmod_checked = false;
+        void CheckSysmoduleNotice();
         float        m_oobe_gallery = 0.0f;    // layout gallery position
         float        m_oobe_list    = 0.0f;    // theme list position
         SDL_Texture *m_oobe_prev[8] = {};      // layout screenshots, loaded lazily

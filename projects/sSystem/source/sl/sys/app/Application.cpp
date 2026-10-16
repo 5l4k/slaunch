@@ -118,6 +118,15 @@ namespace sl::sys::app {
         return first;
     }
 
+    bool WantsUser(u64 app_id) {
+        auto ctl = std::make_unique<NsApplicationControlData>();
+        u64 got = 0;
+        if (R_FAILED(nsGetApplicationControlData(NsApplicationControlSource_Storage, app_id,
+                                                 ctl.get(), sizeof(*ctl), &got)))
+            return true;   // unknown: behave as before
+        return ctl->nacp.startup_user_account != 0;
+    }
+
     Result Launch(u64 app_id, AccountUid user) {
         if (g_AppRunning) return MAKERESULT(Module_Libnx, LibnxError_BadInput);
 

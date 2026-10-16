@@ -11,7 +11,7 @@ rescales them to 64x64 on load.
 
 ## Later additions (not by MeepCat55)
 
-`settings.png`, `music.png` and `homebrewmenu.png` were added afterwards to
+`settings.png`, `music.png`, `homebrewmenu.png` and `bluetooth.png` were added afterwards to
 complete the set, and are **not** MeepCat55's work. They follow the same
 convention as the originals - white artwork carried by the alpha channel on a
 256x256 RGBA canvas - but they were generated rather than drawn in Inkscape, so

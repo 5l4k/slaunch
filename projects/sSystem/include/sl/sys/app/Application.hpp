@@ -16,6 +16,9 @@ namespace sl::sys::app {
     // A save could not be created for lack of space (Launch returns it).
     bool IsNoSpace(Result rc);
 
+    // The game's NACP asks for a user at launch (StartupUserAccount set).
+    bool WantsUser(u64 app_id);
+
     Result Launch(u64 app_id, AccountUid user);
 
     // Give foreground back to the currently suspended application

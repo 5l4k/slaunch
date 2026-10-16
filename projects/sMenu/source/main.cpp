@@ -385,6 +385,7 @@ extern "C" void __appInit() {
 extern "C" void __appExit() {
     __nx_win_exit();
     hidsysExit();
+    btmsysExit();   // opened on first use by the Bluetooth screen (no-op if never)
     socketExit(); nifmExit();
     plExit(); psmExit(); nsExit(); accountExit(); hidExit(); appletExit();
     setExit(); setsysExit(); timeExit();

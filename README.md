@@ -51,19 +51,25 @@ export PATH=$DEVKITA64/bin:$PATH
 ```
 
 
-3. **Compile libstratosphere:**
-Clone Atmosphere 1.11.2 and build the library into your devkitPro directory:
+3. **Build libnx master and libstratosphere:**
+Atmosphere 1.12.0 (the release that supports firmware 23.0.x) needs a newer libnx than the packaged 4.12.0, so libnx master is built into a folder of its own for the daemon; the menu keeps the packaged libnx. Built against older libraries, the daemon does not start on 23.0.x.
 
 ```bash
-git clone --depth=1 --branch 1.11.2 https://github.com/Atmosphere-NX/Atmosphere /opt/atmosphere
-make -C /opt/atmosphere/libraries/libstratosphere -j$(nproc)
+git clone --depth 50 https://github.com/switchbrew/libnx ~/libnx-master
+make -C ~/libnx-master/nx -j$(nproc)
+make -C ~/libnx-master/nx install DESTDIR=$HOME/libnx-master-install
+export SL_LIBNX=$HOME/libnx-master-install/opt/devkitpro/libnx
+
+git clone --depth=1 --branch 1.12.0 https://github.com/Atmosphere-NX/Atmosphere /opt/atmosphere
+make -C /opt/atmosphere/libraries/libstratosphere -j$(nproc) LIBNX=$SL_LIBNX
 
 mkdir -p $DEVKITPRO/AtmosphereLibs/include $DEVKITPRO/AtmosphereLibs/lib
 cp -r /opt/atmosphere/libraries/libstratosphere/include/. $DEVKITPRO/AtmosphereLibs/include/
 cp -r /opt/atmosphere/libraries/libvapours/include/.      $DEVKITPRO/AtmosphereLibs/include/
 find /opt/atmosphere/libraries/libstratosphere -name '*.a' -exec cp {} $DEVKITPRO/AtmosphereLibs/lib/ \;
-
 ```
+
+The daemon's Makefile looks for that libnx in `~/Desktop/Projects/switch/libnx-master-install` by default; point it elsewhere with `make LIBNX=$SL_LIBNX`.
 
 
 4. **Build sLaunch:**
@@ -77,7 +83,7 @@ Run `make` in the sLaunch root directory. This compiles the daemon, applet, and 
 
 * **uLaunch (Xortroll & contributors):** Architecture, applet/daemon model, ECS content-serving, and NPDMs (GPLv2).
 * **nx-hbloader (switchbrew):** Foundation for the bundled homebrew loader fork (ISC).
-* **Atmosphère (haze):** USB file transfer protocol (GPLv2).
+* **Atmosphere (haze):** USB file transfer protocol (GPLv2).
 * **MeepCat55:** Creator of the bundled `Minimal` icon pack.
 * **Xelu:** Free Controller and Key Prompts used for UI buttons (CC0).
 * **averne / FFmpeg (nvtegra branch) & SwitchWave:** NVDEC hardware-acceleration backend used for video wallpaper decoding (GPLv2+).

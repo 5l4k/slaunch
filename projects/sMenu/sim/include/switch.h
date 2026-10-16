@@ -160,6 +160,24 @@ Result psmGetChargerType(PsmChargerType *out);
 // System settings
 Result setGetSystemLanguage(u64 *out);
 
+// Bluetooth (btm:sys). The sim pretends one device is paired and one found.
+typedef struct { u8 address[6]; } BtdrvAddress;
+typedef struct { BtdrvAddress addr; char name[0xF9]; } BtmAudioDevice;
+Result btmsysInitialize(void);
+void   btmsysExit(void);
+Result btmsysGetRadioOnOff(bool *out);
+Result btmsysEnableRadio(void);
+Result btmsysDisableRadio(void);
+Result btmsysIsDiscoveryingAudioDevice(bool *out);
+Result btmsysStartAudioDeviceDiscovery(void);
+Result btmsysStopAudioDeviceDiscovery(void);
+Result btmsysGetDiscoveredAudioDevice(BtmAudioDevice *out, s32 count, s32 *total_out);
+Result btmsysGetConnectedAudioDevices(BtmAudioDevice *out, s32 count, s32 *total_out);
+Result btmsysGetPairedAudioDevices(BtmAudioDevice *out, s32 count, s32 *total_out);
+Result btmsysConnectAudioDevice(BtdrvAddress addr);
+Result btmsysDisconnectAudioDevice(BtdrvAddress addr);
+Result btmsysRemoveAudioDevicePairing(BtdrvAddress addr);
+
 typedef struct {
     u32 flags;
     s32 handheld_sleep_plan;

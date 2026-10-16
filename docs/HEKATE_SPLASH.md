@@ -4,7 +4,7 @@
 That alone does nothing on a normal console: package3 is loaded by hekate's
 own parser (`bootloader/hos/pkg3.c` upstream), and that parser defines a
 `CNT_TYPE_BMP` content type but never processes it. Drawing it was
-fusee-primary's job, and Atmosphère removed fusee-primary entirely in 1.10.0 -
+fusee-primary's job, and Atmosphere removed fusee-primary entirely in 1.10.0 -
 there's no current, working binary anywhere that still does this.
 
 So the splash needs two changes on top of each other:

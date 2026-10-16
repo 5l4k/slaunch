@@ -19,6 +19,15 @@ namespace sl::menu::ui {
 
     static void StepSleepPlan(bool tv, int dir);   // below, with the Theming rows
 
+    // Theming > "Ask who's playing" (issue #7): the daemon shows the system's
+    // player select before launching a game when this file exists.
+    static constexpr const char *kAskUserPath = "sdmc:/slaunch/config/ask_user";
+    static bool AskUserEnabled() {
+        struct stat st {};
+        return stat(kAskUserPath, &st) == 0;
+    }
+
+
     Menu::Action Menu::OnButtonKeyboard(Btn b) {
         auto commit = [&]() {
             switch (m_kb_purpose) {
@@ -120,7 +129,7 @@ namespace sl::menu::ui {
         }
         return Action::None;
     }
-    // Setup: Welcome, Layout, Theme, Good to know, Done.
+    // Setup: Welcome, Layout, Theme, System modules, Good to know, Done.
     Menu::Action Menu::OnButtonOobe(Btn b) {
         constexpr int LastStep = kOobeSteps - 1;
         const bool prev = (b == Btn::Left || b == Btn::Up);
@@ -140,7 +149,12 @@ namespace sl::menu::ui {
 
         if (b == Btn::A) {
             if (m_oobe_step < LastStep) {
+                // Leaving the system-module warning counts as having seen it,
+                // so the one-time notice does not repeat it on the first boot.
+                if (m_oobe_step == 3)
+                    if (FILE *f = fopen(kSysmodNoticePath, "w")) fclose(f);
                 m_oobe_step++;
+                if (m_oobe_step == 3) m_boot_modules = BootModules();
                 if (m_oobe_step == 1) m_oobe_gallery = (float)(int)m_ui_mode;
                 if (m_oobe_step == 2) m_oobe_list = (float)m_theme_cursor;
             } else {
@@ -646,6 +660,142 @@ namespace sl::menu::ui {
         if (a) RefreshNetwork(true);
         return Action::None;
     }
+    // ---- Bluetooth ------------------------------------------------------------
+    // Rows: the radio, the search toggle, then paired audio devices, then what a
+    // search has found. btm:sys answers over IPC, so it is polled about once a
+    // second (and at once after an action), not every frame.
+    int Menu::BtRowCount() const {
+        return 2 + (int)m_bt.paired.size() + (int)m_bt.found.size();
+    }
+    void Menu::RefreshBluetooth(bool force) {
+        const u64 now = armGetSystemTick();
+        if (!force && m_bt_tick && (now - m_bt_tick) < armGetSystemTickFreq()) return;
+        m_bt_tick = now;
+        if (!m_bt_init) {
+            m_bt_init = true;
+            m_bt.ok = R_SUCCEEDED(btmsysInitialize());
+        }
+        if (!m_bt.ok) return;
+        m_bt.audio = hosversionAtLeast(13, 0, 0);
+        bool on = false;
+        if (R_SUCCEEDED(btmsysGetRadioOnOff(&on))) m_bt.radio = on;
+        if (!m_bt.audio) return;
+
+        bool searching = false;
+        if (R_SUCCEEDED(btmsysIsDiscoveryingAudioDevice(&searching))) m_bt.searching = searching;
+
+        BtmAudioDevice devs[16];
+        s32 n = 0;
+        auto same = [](const BtdrvAddress &a, const BtdrvAddress &b) {
+            return memcmp(a.address, b.address, sizeof(a.address)) == 0;
+        };
+        std::vector<BtDevice> connected;
+        if (R_SUCCEEDED(btmsysGetConnectedAudioDevices(devs, 16, &n)))
+            for (s32 i = 0; i < n; i++) connected.push_back({ devs[i].addr, devs[i].name, true });
+        m_bt.paired.clear();
+        if (R_SUCCEEDED(btmsysGetPairedAudioDevices(devs, 16, &n)))
+            for (s32 i = 0; i < n && i < 16; i++) {
+                BtDevice d{ devs[i].addr, devs[i].name, false };
+                for (const auto &c : connected) if (same(c.addr, d.addr)) d.connected = true;
+                m_bt.paired.push_back(d);
+            }
+        m_bt.found.clear();
+        if (R_SUCCEEDED(btmsysGetDiscoveredAudioDevice(devs, 16, &n)))
+            for (s32 i = 0; i < n && i < 16; i++) {
+                bool known = false;
+                for (const auto &p : m_bt.paired) if (same(p.addr, devs[i].addr)) known = true;
+                if (!known) m_bt.found.push_back({ devs[i].addr, devs[i].name, false });
+            }
+        m_bt_cursor = std::min(m_bt_cursor, BtRowCount() - 1);
+    }
+    void Menu::DrawBluetooth() {
+        RefreshBluetooth(false);
+        DrawTopBar("Bluetooth");
+        std::vector<std::string> labels, values;
+        auto nameOf = [](const BtDevice &d) {
+            if (!d.name.empty()) return d.name;
+            char b[24];
+            snprintf(b, sizeof(b), "%02X:%02X:%02X:%02X:%02X:%02X", d.addr.address[0], d.addr.address[1],
+                     d.addr.address[2], d.addr.address[3], d.addr.address[4], d.addr.address[5]);
+            return std::string(b);
+        };
+        labels.push_back(T("Bluetooth"));
+        values.push_back(!m_bt.ok ? T("Not available") : m_bt.radio ? T("On") : T("Off"));
+        labels.push_back(T("Search for audio devices"));
+        values.push_back(!m_bt.audio ? T("Needs system update 13.0.0")
+                         : m_bt.searching ? T("Searching...") : "");
+        for (const auto &d : m_bt.paired) {
+            labels.push_back(nameOf(d));
+            values.push_back(d.connected ? T("Connected") : T("Not connected"));
+        }
+        for (const auto &d : m_bt.found) {
+            labels.push_back(nameOf(d));
+            values.push_back(T("Pair"));
+        }
+        DrawCarousel(labels, values, m_bt_cursor, m_sub_scroll);
+        const int row = m_bt_cursor - 2;
+        if (row >= 0 && row < (int)m_bt.paired.size())
+            DrawStatusHint({ {{"a"}, m_bt.paired[row].connected ? "Disconnect" : "Connect"},
+                             {{"x"}, "Forget"}, {{"b"}, "Back"} });
+        else
+            DrawStatusHint({ {{"up","down"}, "Select"}, {{"a"}, "Change"}, {{"b"}, "Back"} });
+    }
+    Menu::Action Menu::OnButtonBluetooth(Btn b) {
+        if (b == Btn::B) {
+            if (m_bt.searching) btmsysStopAudioDeviceDiscovery();
+            m_screen = BackTarget(); m_sub_scroll = 0;
+            return Action::None;
+        }
+        const int rows = BtRowCount();
+        if (b == Btn::Down) m_bt_cursor = (m_bt_cursor + 1) % rows;
+        if (b == Btn::Up)   m_bt_cursor = (m_bt_cursor + rows - 1) % rows;
+        if (!m_bt.ok) return Action::None;
+
+        const bool a = (b == Btn::A);
+        if (m_bt_cursor == 0 && (a || b == Btn::Left || b == Btn::Right)) {
+            const Result rc = m_bt.radio ? btmsysDisableRadio() : btmsysEnableRadio();
+            if (R_SUCCEEDED(rc)) {
+                SetStatus(m_bt.radio ? T("Bluetooth off") : T("Bluetooth on"));
+                m_sfx_confirm = true;
+            } else {
+                SetStatus(T("Could not change Bluetooth"));
+            }
+            RefreshBluetooth(true);
+            return Action::None;
+        }
+        if (!m_bt.audio) return Action::None;
+        if (m_bt_cursor == 1 && a) {
+            if (!m_bt.radio) { SetStatus(T("Turn Bluetooth on first")); return Action::None; }
+            const Result rc = m_bt.searching ? btmsysStopAudioDeviceDiscovery()
+                                             : btmsysStartAudioDeviceDiscovery();
+            if (R_FAILED(rc)) SetStatus(T("Could not search for devices"));
+            RefreshBluetooth(true);
+            return Action::None;
+        }
+        const int pi = m_bt_cursor - 2, fi = pi - (int)m_bt.paired.size();
+        if (pi >= 0 && pi < (int)m_bt.paired.size()) {
+            const BtDevice d = m_bt.paired[pi];
+            if (a) {
+                const Result rc = d.connected ? btmsysDisconnectAudioDevice(d.addr)
+                                              : btmsysConnectAudioDevice(d.addr);
+                SetStatus(R_FAILED(rc) ? T("Could not connect")
+                          : d.connected ? T("Disconnecting...") : T("Connecting..."));
+            } else if (b == Btn::X) {
+                if (R_SUCCEEDED(btmsysRemoveAudioDevicePairing(d.addr))) SetStatus(T("Device forgotten"));
+            }
+            RefreshBluetooth(true);
+            return Action::None;
+        }
+        if (fi >= 0 && fi < (int)m_bt.found.size() && a) {
+            // Connecting a discovered device pairs it as well.
+            if (m_bt.searching) btmsysStopAudioDeviceDiscovery();
+            const Result rc = btmsysConnectAudioDevice(m_bt.found[fi].addr);
+            SetStatus(R_FAILED(rc) ? T("Could not pair") : T("Pairing..."));
+            RefreshBluetooth(true);
+        }
+        return Action::None;
+    }
+
     void Menu::ScanPayloads() {
         if (m_payloads_scanned) return;   // cheap, but the dirs cannot change under us
         m_payloads_scanned = true;
@@ -918,8 +1068,8 @@ namespace sl::menu::ui {
             if (idx >= kChangelogN) break;
             const LogLine &l = kChangelog[idx];
             const int y = kAboutTop + i * kAboutRowH;
-            if (l.head) m_gfx->Text(FontSize::Normal, lx, y, t.fg, l.text);
-            else        m_gfx->Text(FontSize::Small, lx + 24, y + 4, t.dim, l.text);
+            if (l.head) m_gfx->Text(FontSize::Normal, lx, y, t.fg, l.text);   // a version tag
+            else        m_gfx->Text(FontSize::Small, lx + 24, y + 4, t.dim, T(l.text));
         }
 
         // Scroll affordances.
@@ -1092,6 +1242,12 @@ namespace sl::menu::ui {
             toggleHints();
         if (m_theming_cursor == TH_Counter && (b == Btn::Left || b == Btn::Right))
             toggleCounter();
+        // The daemon reads this when it launches a game, so it is a file on
+        // the card, shared by every account like the system setting it mimics.
+        if (m_theming_cursor == TH_AskUser && (b == Btn::Left || b == Btn::Right || b == Btn::A)) {
+            if (AskUserEnabled()) remove(kAskUserPath);
+            else if (FILE *f = fopen(kAskUserPath, "w")) fclose(f);
+        }
         if ((m_theming_cursor == TH_Sleep || m_theming_cursor == TH_SleepTv) &&
             (b == Btn::Left || b == Btn::Right || b == Btn::A))
             StepSleepPlan(m_theming_cursor == TH_SleepTv, b == Btn::Left ? -1 : +1);
@@ -1715,9 +1871,10 @@ namespace sl::menu::ui {
 
         struct Page { const char *title, *sub; };
         const Page pages[kOobeSteps] = {
-            { "Welcome to sLaunch", "A clean HOME Menu replacement. Let's set it up - it only takes a moment." },
+            { "Welcome to sLaunch", "A new home. Let's set it up - it only takes a moment." },
             { "Choose a layout",    "How your games are laid out. You can change it any time in Theming." },
             { "Pick a theme",       "Applied as you browse. Make your own later in Theming > Themes." },
+            { "Turn off system modules", "Sysmodules that hook into the HOME Menu are the most common cause of crashes." },
             { "Good to know",       "A few things worth knowing before you start." },
             { "You're all set",     "Enjoy sLaunch." },
         };
@@ -1788,7 +1945,7 @@ namespace sl::menu::ui {
                     preview(mode, cx - w / 2, cy - h / 2, w, h, a, mode == cur && ad < 0.5f);
                 }
                 m_gfx->TextCentered(FontSize::Large, W / 2, 540, t.title, T(kLayoutNames[cur]));
-                if (cur == (int)UiMode::XMB) {             // the one we suggest
+                if (cur == (int)UiMode::Shelf) {           // the one we suggest (the default)
                     const int nw = m_gfx->TextWidth(FontSize::Large, T(kLayoutNames[cur]));
                     m_gfx->Text(FontSize::Small, W / 2 + nw / 2 + 14, 552, t.accent, T("Recommended"));
                 }
@@ -1815,7 +1972,7 @@ namespace sl::menu::ui {
                     const int lh = m_gfx->LineHeight(FontSize::Normal);
                     const int ty = y + (rowH - 12 - lh) / 2;
                     if (sel) m_gfx->Text(FontSize::Normal, x - 30, ty, WithAlpha(t.accent, a), ">");
-                    m_gfx->Text(FontSize::Normal, x, ty, WithAlpha(sel ? t.accent : t.fg, a), th.name);
+                    m_gfx->Text(FontSize::Normal, x, ty, WithAlpha(sel ? t.accent : t.fg, a), T(th.name));
                     const SDL_Color sw[4] = { th.bg_top, th.bg_bottom, th.accent, th.title };
                     for (int k = 0; k < 4; k++) {           // the theme's own colours
                         const int sx = x + listW - (4 - k) * 26, sy = y + (rowH - 12) / 2 - 9;
@@ -1826,7 +1983,34 @@ namespace sl::menu::ui {
                 DrawHint({ {{"up","down"}, "Choose"}, {{"a"}, "Next"}, {{"b"}, "Back"} });
                 break;
             }
-            case 3: {   // tips, as four cards
+            case 3: {   // system modules: what to do, and which ones are on now
+                const int x = 200, w = W - 2 * x;
+                int y = 200;
+                const int lh = m_gfx->LineHeight(FontSize::Normal) + 6;
+                for (const auto &line : WrapText(FontSize::Normal,
+                        T("Many Atmosphere sysmodules inject into the HOME Menu, which sLaunch replaces. Before reporting a crash or freeze, turn them off in the Sysmodules overlay (or rename atmosphere/contents/<id>/flags/boot2.flag) and restart."),
+                        w)) {
+                    m_gfx->Text(FontSize::Normal, x, y, t.fg, line.c_str());
+                    y += lh;
+                }
+                y += 24;
+                if (m_boot_modules.empty()) {
+                    m_gfx->Text(FontSize::Normal, x, y, t.accent, T("No sysmodules start at boot. You're good to go."));
+                } else {
+                    m_gfx->Text(FontSize::Normal, x, y, t.accent, T("Starting at boot on this console:"));
+                    y += lh;
+                    std::string list;
+                    for (size_t i = 0; i < m_boot_modules.size(); i++)
+                        list += (i ? ", " : "") + m_boot_modules[i];
+                    for (const auto &line : WrapText(FontSize::Small, list, w)) {
+                        m_gfx->Text(FontSize::Small, x, y, t.title, line.c_str());
+                        y += m_gfx->LineHeight(FontSize::Small) + 4;
+                    }
+                }
+                DrawHint({ {{"a"}, "Next"}, {{"b"}, "Back"} });
+                break;
+            }
+            case 4: {   // tips, as four cards
                 struct Tip { const char *key; const char *val; };
                 const Tip tips[4] = {
                     { "X",        "Options on any entry: favourite, rename, move" },
@@ -1954,7 +2138,7 @@ namespace sl::menu::ui {
             T("Fonts"), T("Language"),
             T("Music"), T("Widgets"),
             T("Menu entries"),
-            T("Screen timeout"), T("Screen timeout (TV)"),
+            T("Screen timeout"), T("Screen timeout (TV)"), T("Ask who's playing"),
             T("Welcome screen"), T("Check for updates"),
             T("About"), T("Back")
         };
@@ -1987,10 +2171,11 @@ namespace sl::menu::ui {
         values[TH_Sgdb]        = m_sgdb_enabled ? T("On") : T("Off");
         values[TH_SgdbKey]     = SgdbKeyPresent() ? T("Set") : T("Not set");
         values[TH_Language]    = kLangs[m_lang_idx].name
-                               ? kLangs[m_lang_idx].name : T("Automatic");
+                               ? T(kLangs[m_lang_idx].name) : T("Automatic");
         values[TH_Music]       = m_music.Enabled() ? T("On") : T("Off");
         values[TH_Sleep]       = SleepPlanText(false);
         values[TH_SleepTv]     = SleepPlanText(true);
+        values[TH_AskUser]     = AskUserEnabled() ? T("On") : T("Off");
         values[TH_Welcome]     = m_welcome_enabled ? T("On") : T("Off");
         values[TH_Updates]     = m_check_updates ? T("On") : T("Off");
         values[TH_About]       = m_upd_available ? T("Update available") : std::string("v") + SL_VERSION;
@@ -2106,8 +2291,8 @@ namespace sl::menu::ui {
                     Ellipsize(m_music.CurrentName(), kMuListX - kMuArtX - 30, FontSize::Normal).c_str());
         static const char *kRepeat[] = { "Repeat all", "Repeat one", "Repeat off" };
         std::string state = std::string(m_music.Enabled() ? T("Playing") : T("Paused")) +
-                            "  ·  " + T(kRepeat[m_music.RepeatMode()]);
-        if (m_music.Shuffle()) state += std::string("  ·  ") + T("Shuffle");
+                            "  -  " + T(kRepeat[m_music.RepeatMode()]);
+        if (m_music.Shuffle()) state += std::string("  -  ") + T("Shuffle");
         char vol[48];
         snprintf(vol, sizeof(vol), "%s %d%%", T("Volume"), m_music.Volume());
         const int sy = ty + m_gfx->LineHeight(FontSize::Normal) + 6;
@@ -2859,7 +3044,7 @@ namespace sl::menu::ui {
         std::vector<std::string> labels, values;
         for (int i = 0; i < n; i++) {
             widgets::IWidget *w = m_widgets.At(i);
-            labels.push_back(w ? w->Name() : "Widget");
+            labels.push_back(w ? w->Name() : std::string(T("Widget")));
             values.push_back(m_widgets.IsEnabled(i) ? T("On") : T("Off"));
         }
         DrawCarousel(labels, values, m_widget_cursor, m_sub_scroll);
@@ -2868,7 +3053,7 @@ namespace sl::menu::ui {
     void Menu::DrawWidgetOptions() {
         const Theme &t = m_theme.Current();
         widgets::IWidget *w = m_widgets.At(m_widget_sel);
-        DrawTopBar(w ? w->Name().c_str() : "Widget");
+        DrawTopBar(w ? w->Name().c_str() : "Widget");   // DrawTopBar translates
 
         const int n = w ? w->OptionCount() : 0;
         if (n == 0) {
@@ -2895,7 +3080,7 @@ namespace sl::menu::ui {
         DrawTopBar("Themes");
         std::vector<std::string> labels, values;
         for (int i = 0; i < m_theme.Count(); i++) {
-            labels.push_back(m_theme.At(i).name);
+            labels.push_back(T(m_theme.At(i).name));   // built-in names translate
             values.push_back(i == m_theme.AppliedIndex() ? T("current") : "");
         }
         labels.push_back(T("+ New custom theme"));
@@ -3175,7 +3360,9 @@ namespace sl::menu::ui {
 
         std::vector<std::string> labels, values;
         for (int i = 0; i < (int)m_font_names.size(); i++) {
-            labels.push_back(m_font_names[i]);
+            // Entry 0's name is what font.cfg stores, so it is only
+            // translated here, where it is shown.
+            labels.push_back(i == 0 ? std::string(T(m_font_names[i].c_str())) : m_font_names[i]);
             values.push_back(i == m_font_applied ? T("applied") : "");
         }
         DrawCarousel(labels, values, m_font_cursor, m_sub_scroll);
@@ -3272,6 +3459,49 @@ namespace sl::menu::ui {
         if (nopts == 2) DrawHint({ {{"up","down"}, "Choose"}, {{"a"}, "Confirm"}, {{"b"}, "Cancel"} });
     }
 
+    // ---- system modules -------------------------------------------------------
+    std::vector<std::string> Menu::BootModules() {
+        std::vector<std::string> out;
+        DIR *d = opendir("sdmc:/atmosphere/contents");
+        if (!d) return out;
+        while (dirent *e = readdir(d)) {
+            if (e->d_name[0] == '.') continue;
+            char p[FS_MAX_PATH];
+            struct stat st {};
+            snprintf(p, sizeof(p), "sdmc:/atmosphere/contents/%s/flags/boot2.flag", e->d_name);
+            if (stat(p, &st) != 0) continue;
+            std::string name = e->d_name;           // the program id when there is no name
+            snprintf(p, sizeof(p), "sdmc:/atmosphere/contents/%s/toolbox.json", e->d_name);
+            if (FILE *f = fopen(p, "r")) {
+                char buf[512] = {};
+                fread(buf, 1, sizeof(buf) - 1, f);
+                fclose(f);
+                const std::string v = JsonStr(buf, "name");
+                if (!v.empty()) name = v;
+            }
+            out.push_back(name);
+        }
+        closedir(d);
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+    // Installs that finished setup before the warning existed get it once, as a
+    // notice - and only when something is actually set to start at boot.
+    void Menu::CheckSysmoduleNotice() {
+        m_sysmod_checked = true;
+        struct stat st {};
+        if (stat(kSysmodNoticePath, &st) == 0) return;
+        if (FILE *f = fopen(kSysmodNoticePath, "w")) fclose(f);
+        const std::vector<std::string> mods = BootModules();
+        if (mods.empty()) return;
+        std::string list;
+        for (size_t i = 0; i < mods.size(); i++) list += (i ? ", " : "") + mods[i];
+        m_dialog_title  = T("Turn off system modules");
+        m_dialog_note   = std::string(T("Sysmodules that hook into the HOME Menu are the most common cause of crashes and freezes with sLaunch. Turn them off in the Sysmodules overlay and restart. Starting at boot:")) + " " + list;
+        m_dialog_cursor = 0;
+        m_dialog        = Dialog::CrashReport;   // a one-button notice
+    }
+
     // ---- crash reports ------------------------------------------------------
     // When a game or homebrew crashes, Atmosphere writes a report and the
     // system comes back to the menu as if nothing happened. This is the
@@ -3297,7 +3527,7 @@ namespace sl::menu::ui {
             have_seen = fscanf(fp, "time=%llu", &seen) == 1;
             fclose(fp);
         }
-        // Atmosphère stamps reports with the clock at crash time, and a clock
+        // Atmosphere stamps reports with the clock at crash time, and a clock
         // that was wrong then (seen: year 2168) would otherwise sort above every
         // real crash forever, so a report from the future is ignored and a
         // "seen" stamp from the future is forgotten.
@@ -3354,8 +3584,8 @@ namespace sl::menu::ui {
 
         char note[512];
         snprintf(note, sizeof(note), T(newest.dir == 1
-                     ? "%s hit a fatal error. Atmosphère usually saves the crash details, check the logs: atmosphere/fatal_reports/%s"
-                     : "%s crashed. Atmosphère usually saves the crash details, check the logs: atmosphere/crash_reports/%s"),
+                     ? "%s hit a fatal error. Atmosphere usually saves the crash details, check the logs: atmosphere/fatal_reports/%s"
+                     : "%s crashed. Atmosphere usually saves the crash details, check the logs: atmosphere/crash_reports/%s"),
                  who.c_str(), newest.file.c_str());
         m_dialog_note = note;
         if (fresh > 1) {

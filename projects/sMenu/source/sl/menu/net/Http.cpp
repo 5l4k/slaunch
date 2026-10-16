@@ -215,7 +215,7 @@ namespace sl::menu::net {
     namespace {
         // Lowercase words, everything else a single space, (TM)/(R) dropped.
         std::string NormTitle(const std::string &raw) {
-            const std::string in = SearchName(raw);   // so "Baldur’s" is "Baldur's"
+            const std::string in = SearchName(raw);   // so a curly apostrophe in "Baldur's" matches the straight one
             std::string out;
             bool sp = false;
             for (size_t i = 0; i < in.size(); i++) {
