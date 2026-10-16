@@ -3,8 +3,8 @@
 [Discord](https://discord.gg/dv28MgtaNn) 
 
 <img width="1280" height="720" alt="2026092401121200-A082AE4E5DA891D87084ACEACFDFF4A9" src="https://github.com/user-attachments/assets/fc5fcfc0-1348-454c-a057-2459c590818a" />
+<img width="1280" height="720" alt="2026101522331400-A082AE4E5DA891D87084ACEACFDFF4A9" src="https://github.com/user-attachments/assets/25b4fedb-23fb-4c87-9cf6-0260a3c94ac2" />
 
-### PLEASE DISABLE ANY SYSMODULES BEFORE REPORTING AN ISSUE
 
 ## Features
 
