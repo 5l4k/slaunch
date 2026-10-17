@@ -101,6 +101,7 @@ namespace sl::menu::ui {
         Phase("LoadFontConfig");
 
         LoadFavourites();
+        LoadCollections();
         LoadSort();
         LoadOrder();
         LoadTileCfg();
@@ -237,6 +238,11 @@ namespace sl::menu::ui {
             threadWaitForExit(&m_upd_thread);
             threadClose(&m_upd_thread);
             m_upd_running = false;
+        }
+        if (m_ping_running) {
+            threadWaitForExit(&m_ping_thread);
+            threadClose(&m_ping_thread);
+            m_ping_running = false;
         }
         if (m_play_running) {
             threadWaitForExit(&m_play_thread);
@@ -400,6 +406,13 @@ namespace sl::menu::ui {
         // Favourites pinned at the very top for quick access.
         for (auto &it : favs) m_items.push_back(std::move(it));
 
+        // Collection folders, right under the favourites (none while inside one).
+        if (m_collections && m_coll_open.empty())
+            for (const auto &c : m_colls) {
+                MenuItem it; it.kind = ItemKind::Collection; it.name = c.name;
+                m_items.push_back(std::move(it));
+            }
+
         // Remaining (non-favourite) pinned homebrew, just under the favourites.
         for (auto &it : hb_pinned) m_items.push_back(std::move(it));
 
@@ -533,6 +546,17 @@ namespace sl::menu::ui {
         // System entries drop out while a search is active - you are looking for
         // something to play, and leaving Power and Theming in every result reads
         // as the search having failed. B clears the search and brings them back.
+        // Inside a collection only its members stay, in the usual order.
+        const int coll = m_collections ? CollIndex(m_coll_open) : -1;
+        if (coll < 0) m_coll_open.clear();
+        else {
+            const auto &keys = m_colls[coll].keys;
+            m_items.erase(std::remove_if(m_items.begin(), m_items.end(),
+                [&](const MenuItem &it) {
+                    return std::find(keys.begin(), keys.end(), ItemKey(it)) == keys.end();
+                }), m_items.end());
+        }
+
         if (!m_search.empty()) {
             m_items.erase(std::remove_if(m_items.begin(), m_items.end(),
                 [&](const MenuItem &it) {
@@ -576,6 +600,52 @@ namespace sl::menu::ui {
         if (!fp) return;
         for (u64 id : m_favourites) fprintf(fp, "%016llX\n", (unsigned long long)id);
         fclose(fp);
+    }
+    // collections.txt: "[Name]" starts a collection, then one ItemKey per line.
+    void Menu::LoadCollections() {
+        m_colls.clear();
+        m_coll_open.clear();
+        FILE *fp = fopen(GetUserConfigPath("collections.txt").c_str(), "r");
+        if (!fp) return;
+        char line[FS_MAX_PATH + 8];
+        while (fgets(line, sizeof(line), fp)) {
+            std::string l(line);
+            while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back();
+            if (l.size() > 2 && l.front() == '[' && l.back() == ']')
+                m_colls.push_back({ l.substr(1, l.size() - 2), {} });
+            else if (!l.empty() && !m_colls.empty())
+                m_colls.back().keys.push_back(l);
+        }
+        fclose(fp);
+    }
+    void Menu::SaveCollections() {
+        EnsureUserConfigDir();
+        FILE *fp = fopen(GetUserConfigPath("collections.txt").c_str(), "w");
+        if (!fp) return;
+        for (const auto &c : m_colls) {
+            fprintf(fp, "[%s]\n", c.name.c_str());
+            for (const auto &k : c.keys) fprintf(fp, "%s\n", k.c_str());
+        }
+        fclose(fp);
+    }
+    int Menu::CollIndex(const std::string &name) const {
+        if (name.empty()) return -1;
+        for (int i = 0; i < (int)m_colls.size(); i++)
+            if (m_colls[i].name == name) return i;
+        return -1;
+    }
+    void Menu::OpenCollection(const std::string &name) {
+        const std::string was = m_coll_open;
+        m_coll_open = name;
+        RebuildItems();
+        m_cursor = 0;
+        m_scroll_pos = 0.0f;
+        m_xmb_col = -1; m_xmb_item = 0;
+        XmbRebuild();
+        if (name.empty() && !was.empty()) {     // back out onto the folder
+            MenuItem f; f.kind = ItemKind::Collection; f.name = was;
+            SelectByKey(ItemKey(f));
+        }
     }
     // Homebrew favourites are kept as .nro paths, one per line.
     bool Menu::IsHbFavourite(const std::string &path) const {
@@ -665,6 +735,8 @@ namespace sl::menu::ui {
                 return "h" + (it.hb_argv.empty() ? it.hb_path : it.hb_argv);
             case ItemKind::WidgetTile:
                 return "w" + it.name;
+            case ItemKind::Collection:
+                return "c" + it.name;
             default:
                 snprintf(b, sizeof(b), "s%d", (int)it.kind);
                 return b;
@@ -784,6 +856,8 @@ namespace sl::menu::ui {
                 m_show_counter = (v != 0);
             else if (sscanf(line, "shortcuts_everywhere=%d", &v) == 1)
                 m_shortcuts_everywhere = (v != 0);
+            else if (sscanf(line, "collections=%d", &v) == 1)
+                m_collections = (v != 0);
             else if (sscanf(line, "retroarch=%d", &v) == 1)
                 m_retroarch = (v != 0);
             else if (sscanf(line, "sgdb=%d", &v) == 1)
@@ -792,6 +866,8 @@ namespace sl::menu::ui {
                 m_tdb_region = std::clamp(v, 0, kTdbRegionCount - 1);
             else if (sscanf(line, "check_updates=%d", &v) == 1)
                 m_check_updates = (v != 0);
+            else if (sscanf(line, "online_count=%d", &v) == 1)
+                m_online_count = (v != 0);
             else if (sscanf(line, "welcome=%d", &v) == 1)
                 m_welcome_enabled = (v != 0);
             else if (strncmp(line, "lang=", 5) == 0) {
@@ -834,8 +910,10 @@ namespace sl::menu::ui {
         fprintf(fp, "show_hints=%d\n", m_show_hints ? 1 : 0);
         fprintf(fp, "show_counter=%d\n", m_show_counter ? 1 : 0);
         fprintf(fp, "shortcuts_everywhere=%d\n", m_shortcuts_everywhere ? 1 : 0);
+        fprintf(fp, "collections=%d\n", m_collections ? 1 : 0);
         fprintf(fp, "retroarch=%d\n", m_retroarch ? 1 : 0);
         fprintf(fp, "check_updates=%d\n", m_check_updates ? 1 : 0);
+        fprintf(fp, "online_count=%d\n", m_online_count ? 1 : 0);
         fprintf(fp, "tdb_region=%d\n", m_tdb_region);
         fprintf(fp, "sgdb=%d\n", m_sgdb_enabled ? 1 : 0);
         fprintf(fp, "welcome=%d\n", m_welcome_enabled ? 1 : 0);
@@ -915,6 +993,7 @@ namespace sl::menu::ui {
         m_theme_cursor = m_theme.CurrentIndex();
         LoadFontConfig();
         LoadFavourites();
+        LoadCollections();
         LoadSort();
         LoadOrder();
         LoadTileCfg();
@@ -931,6 +1010,7 @@ namespace sl::menu::ui {
         strncpy(m_status, T(msg), 127);   // localized; unknown messages pass through
         m_status[127] = '\0';
         m_status_tick = armGetSystemTick();
+        m_status_secs = 3;
     }
 
     // ---- Per-user config paths ---------------------------------------------
@@ -1164,6 +1244,7 @@ namespace sl::menu::ui {
                 RefreshBluetooth(true);
                 return Action::None;
             case ItemKind::Power:        EnterPower(); return Action::None;
+            case ItemKind::Collection:   OpenCollection(it.name); return Action::None;
         }
         return Action::None;
     }
@@ -1182,6 +1263,8 @@ namespace sl::menu::ui {
                 RebuildItems();
                 m_xmb_placed = false;
                 SetStatus(T("Search cleared"));
+            } else if (b == Btn::B && !m_coll_open.empty()) {
+                OpenCollection("");
             }
             return Action::None;
         }
@@ -1395,6 +1478,17 @@ namespace sl::menu::ui {
         // here, or worse, mutate that unrelated state as a side effect.
         if (b == Btn::A) return ActivateSelected(out_app_id);
 
+        // Y searches in every layout that does not claim it above (XMB has its
+        // own, Deck opens the library, the Grid's music tile plays/pauses).
+        if (b == Btn::Y) { OpenSearch(); return Action::None; }
+        if (b == Btn::B && !m_search.empty()) {
+            m_search.clear();
+            RebuildItems();
+            SetStatus(T("Search cleared"));
+            return Action::None;
+        }
+        if (b == Btn::B && !m_coll_open.empty()) { OpenCollection(""); return Action::None; }
+
         if (b == Btn::X) {
             m_options_sub = Sub_None;
             BuildOptions();
@@ -1430,8 +1524,25 @@ namespace sl::menu::ui {
             m_options.push_back({ T("Back"), OptSubBack });
             return;
         }
+        if (m_options_sub == Sub_Collections) {
+            const std::string key = ItemKey(m_items[m_cursor]);
+            for (int i = 0; i < (int)m_colls.size(); i++) {
+                const auto &k = m_colls[i].keys;
+                const bool in = std::find(k.begin(), k.end(), key) != k.end();
+                m_options.push_back({ std::string(in ? "[x] " : "[ ] ") + m_colls[i].name,
+                                      OptCollToggle, i });
+            }
+            m_options.push_back({ T("New collection"), OptCollNew });
+            m_options.push_back({ T("Back"), OptSubBack });
+            return;
+        }
 
         const MenuItem &it = m_items[m_cursor];
+        if (it.kind == ItemKind::Collection) {
+            m_options.push_back({ T("Rename"), OptCollRename });
+            m_options.push_back({ T("Delete collection"), OptCollDelete });
+        }
+
         if (it.kind == ItemKind::Game) {
             m_options.push_back({ IsFavourite(it.app_id) ? T("Remove from Favourites")
                                                          : T("Add to Favourites"), OptFav });
@@ -1445,6 +1556,8 @@ namespace sl::menu::ui {
                                                             : T("Add to Favourites"), OptFav });
             m_options.push_back({ T("Remove from menu"), OptUnpinHb });
         }
+        if (m_collections && (it.kind == ItemKind::Game || it.kind == ItemKind::Homebrew))
+            m_options.push_back({ T("Collections"), OptCollMenu });
         // Any entry can be reordered.
         m_options.push_back({ T("Move"), OptMove });
 
@@ -1611,6 +1724,56 @@ namespace sl::menu::ui {
                 RemoveWidgetTile(sel.name);
                 m_options_open = false;
                 return Action::None;
+            case OptCollMenu:
+                m_options_sub = Sub_Collections;
+                BuildOptions();
+                m_options_cursor = 0;
+                return Action::None;
+            case OptCollToggle: {
+                const int ci = m_options[m_options_cursor].arg;
+                if (ci < 0 || ci >= (int)m_colls.size()) return Action::None;
+                auto &k = m_colls[ci].keys;
+                auto f = std::find(k.begin(), k.end(), sel_key);
+                if (f != k.end()) k.erase(f); else k.push_back(sel_key);
+                SaveCollections();
+                const int keep = m_options_cursor;
+                if (!m_coll_open.empty()) {     // may have left the open one
+                    RebuildItems();
+                    if (!m_items.empty()) SelectByKey(sel_key);
+                    if (m_items.empty() || ItemKey(m_items[m_cursor]) != sel_key) {
+                        m_options_open = false; m_options_sub = Sub_None;
+                        return Action::None;
+                    }
+                }
+                BuildOptions();
+                m_options_cursor = keep;
+                return Action::None;
+            }
+            case OptCollNew:
+                m_kb_purpose = sl::smi::Kb_CollNew;
+                m_kb_key  = sel_key;
+                m_kb_text.clear();
+                m_kb_row = 0; m_kb_col = 0; m_kb_upper = true;
+                m_options_sub  = Sub_None;
+                m_options_open = false;
+                m_screen = Screen::Keyboard;
+                return Action::None;
+            case OptCollRename:
+                m_kb_purpose = sl::smi::Kb_CollRename;
+                m_kb_app  = (u64)CollIndex(sel.name);
+                m_kb_text = sel.name;
+                m_kb_row = 0; m_kb_col = 0; m_kb_upper = false;
+                m_options_open = false;
+                m_screen = Screen::Keyboard;
+                return Action::None;
+            case OptCollDelete: {
+                const int ci = CollIndex(sel.name);
+                if (ci >= 0) { m_colls.erase(m_colls.begin() + ci); SaveCollections(); }
+                RebuildItems();
+                SetStatus(T("Collection deleted"));
+                m_options_open = false;
+                return Action::None;
+            }
             case OptDismiss:
             default:
                 m_options_open = false;
@@ -1641,11 +1804,69 @@ namespace sl::menu::ui {
             m_upd_running = true;
         }
     }
+    void Menu::PingTrampoline(void *self) {
+        Menu *m = static_cast<Menu *>(self);
+        // A random id, made once per card: lets the server count consoles
+        // instead of menu launches (the menu restarts after every game).
+        char id[40] = {};
+        if (FILE *fp = fopen(kInstallId, "r")) {
+            if (!fgets(id, sizeof(id), fp)) id[0] = '\0';
+            fclose(fp);
+            id[strcspn(id, "\r\n")] = '\0';
+        }
+        if (strlen(id) != 32) {
+            snprintf(id, sizeof(id), "%016llx%016llx",
+                     (unsigned long long)randomGet64(), (unsigned long long)randomGet64());
+            if (FILE *fp = fopen(kInstallId, "w")) { fprintf(fp, "%s\n", id); fclose(fp); }
+        }
+        char body[96];
+        snprintf(body, sizeof(body), "id=%s&v=%s", id, SL_VERSION);
+        std::string out;
+        net::Post(kPingUrl, body, "application/x-www-form-urlencoded", nullptr, out, 8);
+        m->m_ping_done.store(true, std::memory_order_release);
+    }
+    void Menu::PollPing() {
+        if (m_ping_running) {
+            if (!m_ping_done.load(std::memory_order_acquire)) return;
+            threadWaitForExit(&m_ping_thread);
+            threadClose(&m_ping_thread);
+            m_ping_running = false;
+        }
+        if (!m_online_count) return;
+        const u64 now = armGetSystemTick();
+        if (m_ping_tick && now - m_ping_tick < kPingEveryS * armGetSystemTickFreq()) return;
+        m_ping_tick = now;
+        m_ping_done.store(false, std::memory_order_release);
+        if (R_SUCCEEDED(threadCreate(&m_ping_thread, &Menu::PingTrampoline, this,
+                                     nullptr, 0x8000, 0x3B, -2))) {
+            threadStart(&m_ping_thread);
+            m_ping_running = true;
+        }
+    }
     void Menu::PollUpdateCheck() {
-        if (!m_upd_running || !m_upd_done.load(std::memory_order_acquire)) return;
-        threadWaitForExit(&m_upd_thread);
-        threadClose(&m_upd_thread);
-        m_upd_running = false;
+        if (m_upd_running && m_upd_done.load(std::memory_order_acquire)) {
+            threadWaitForExit(&m_upd_thread);
+            threadClose(&m_upd_thread);
+            m_upd_running = false;
+        }
+        // The result used to live only in Theming > About, where nobody saw
+        // it. Say it once on the home screen, once per new release: the menu
+        // restarts after every game and would nag otherwise.
+        if (!m_upd_available || m_upd_told || m_screen != Screen::Main) return;
+        m_upd_told = true;
+        constexpr const char *seen = "sdmc:/slaunch/config/update_seen";
+        char last[32] = {};
+        if (FILE *fp = fopen(seen, "r")) {
+            if (!fgets(last, sizeof(last), fp)) last[0] = '\0';
+            fclose(fp);
+            last[strcspn(last, "\r\n")] = '\0';
+        }
+        if (m_upd_latest == last) return;
+        if (FILE *fp = fopen(seen, "w")) { fprintf(fp, "%s\n", m_upd_latest.c_str()); fclose(fp); }
+        snprintf(m_status, sizeof(m_status), "%s %s - %s", T("Update available:"),
+                 m_upd_latest.c_str(), T("see Theming > About"));
+        m_status_tick = armGetSystemTick();
+        m_status_secs = 10;
     }
     void Menu::EnterWelcome() {
         m_screen        = Screen::Welcome;
@@ -2316,6 +2537,7 @@ namespace sl::menu::ui {
         PollHbScan();       // swap in the homebrew browser list when its worker finishes
         PollResolvePins();  // fold in pinned-homebrew names/icons when its worker finishes
         PollUpdateCheck();  // join the update-check worker when it finishes
+        PollPing();         // anonymous online count heartbeat
         PollPlayStats();    // start/collect the pdm play-time query
 
         // SD card pulled while powered on: nothing else matters, show the warning
@@ -2703,10 +2925,27 @@ namespace sl::menu::ui {
         // Fresh status (< 3s) shows above the control hint, then fades out.
         if (m_status[0] != '\0') {
             u64 nowt = armGetSystemTick(), freq = armGetSystemTickFreq();
-            if ((nowt - m_status_tick) < 3 * freq)
+            if ((nowt - m_status_tick) < m_status_secs * freq) {
+                // On a plate, so it stays readable over whatever the layout
+                // has down here (Deck's news cards, a busy screenshot).
+                const int sw = m_gfx->TextWidth(FontSize::Normal, m_status) + 36;
+                const int lh = m_gfx->LineHeight(FontSize::Normal);
+                m_gfx->FillRect(gfx::Gfx::Width / 2 - sw / 2, kHintY - 50, sw, lh + 12,
+                                WithAlpha(t.bg_bottom, 225));
                 m_gfx->TextCentered(FontSize::Normal, gfx::Gfx::Width / 2, kHintY - 44, t.accent, m_status);
+            }
             else
                 m_status[0] = '\0';
+        }
+        // An active filter hides most of the library; say so on every layout
+        // (XMB already puts it in its header).
+        if (m_screen == Screen::Main && !m_search.empty() && m_ui_mode != UiMode::XMB) {
+            const std::string s = std::string(T("Search")) + ": \"" + m_search + "\"    "
+                                + T("B: Clear search");
+            m_gfx->TextCentered(FontSize::Small, gfx::Gfx::Width / 2, kHintY - 76, t.accent, s.c_str());
+        } else if (m_screen == Screen::Main && !m_coll_open.empty()) {
+            const std::string s = m_coll_open + "    " + T("B: Back");
+            m_gfx->TextCentered(FontSize::Small, gfx::Gfx::Width / 2, kHintY - 76, t.accent, s.c_str());
         }
         DrawHint(segs);
     }
@@ -2751,6 +2990,7 @@ namespace sl::menu::ui {
             case ItemKind::Power:        file = "power";        break;
             case ItemKind::HomebrewMenu: file = "homebrewmenu"; break;
             case ItemKind::FileManager:  file = "filemanager";  break;
+            case ItemKind::Collection:   file = "fm_folder";    break;
             default: break;
         }
         SDL_Texture *tex = nullptr;

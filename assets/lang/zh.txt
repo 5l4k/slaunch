@@ -542,3 +542,15 @@ Many Atmosphere sysmodules inject into the HOME Menu, which sLaunch replaces. Be
 No sysmodules start at boot. You're good to go.=没有在启动时运行的系统模块，一切就绪。
 Starting at boot on this console:=此主机启动时运行：
 Sysmodules that hook into the HOME Menu are the most common cause of crashes and freezes with sLaunch. Turn them off in the Sysmodules overlay and restart. Starting at boot:=挂接到HOME菜单的系统模块是sLaunch崩溃和卡死最常见的原因。请在Sysmodules覆盖层中关闭它们并重启。启动时运行：
+B: Clear search=B: 清除搜索
+B: Back=B: 返回
+New collection=新建收藏夹
+Delete collection=删除收藏夹
+Collections=收藏夹
+Collection deleted=已删除收藏夹
+Collection created=已创建收藏夹
+X on a game: Collections > New collection=在游戏上按X: 收藏夹 > 新建收藏夹
+Online count=在线计数
+sLaunch counts how many consoles are online with a random ID. Theming > Online count turns it off.=sLaunch 使用随机 ID 统计在线主机数量。可在 Theming > 在线计数 中关闭。
+Update available:=有可用更新:
+see Theming > About=请查看 Theming > About

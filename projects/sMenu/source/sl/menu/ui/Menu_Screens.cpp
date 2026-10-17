@@ -82,6 +82,31 @@ namespace sl::menu::ui {
                     m_screen = Screen::Main;
                     break;
                 }
+                case sl::smi::Kb_CollNew:
+                case sl::smi::Kb_CollRename: {
+                    // '[' would break the file format, and a name in use would
+                    // merge two collections.
+                    std::string name = m_kb_text;
+                    name.erase(std::remove_if(name.begin(), name.end(),
+                               [](char c){ return c == '[' || c == ']'; }), name.end());
+                    while (!name.empty() && name.back() == ' ') name.pop_back();
+                    m_screen = Screen::Main;
+                    if (name.empty() || CollIndex(name) >= 0) {
+                        SetStatus(name.empty() ? T("Cancelled") : T("That name is taken"));
+                        break;
+                    }
+                    if (m_kb_purpose == sl::smi::Kb_CollNew) {
+                        m_colls.push_back({ name, { m_kb_key } });
+                    } else if (m_kb_app < m_colls.size()) {
+                        m_colls[m_kb_app].name = name;
+                    }
+                    SaveCollections();
+                    const std::string keep = m_kb_purpose == sl::smi::Kb_CollNew ? m_kb_key : "c" + name;
+                    RebuildItems();
+                    SelectByKey(keep);
+                    SetStatus(m_kb_purpose == sl::smi::Kb_CollNew ? T("Collection created") : T("Renamed"));
+                    break;
+                }
                 default: // Kb_RenameGame
                     SetCustomName(m_kb_app, m_kb_text.c_str());
                     RebuildItems();
@@ -1191,9 +1216,21 @@ namespace sl::menu::ui {
         };
         if (m_theming_cursor == TH_Shortcuts && (b == Btn::Left || b == Btn::Right))
             toggleShortcuts();
+        if (m_theming_cursor == TH_Collections && (b == Btn::Left || b == Btn::Right || b == Btn::A)) {
+            m_collections = !m_collections;
+            m_coll_open.clear();
+            SaveSettings();
+            RebuildItems();
+            if (m_collections && m_colls.empty())
+                SetStatus(T("X on a game: Collections > New collection"));
+        }
         auto toggleUpdates = [&]() { m_check_updates = !m_check_updates; SaveSettings(); };
         if (m_theming_cursor == TH_Updates && (b == Btn::Left || b == Btn::Right))
             toggleUpdates();
+        if (m_theming_cursor == TH_Online && (b == Btn::Left || b == Btn::Right || b == Btn::A)) {
+            m_online_count = !m_online_count;
+            SaveSettings();
+        }
         auto toggleWelcome = [&]() { m_welcome_enabled = !m_welcome_enabled; SaveSettings(); };
         if (m_theming_cursor == TH_Welcome && (b == Btn::Left || b == Btn::Right))
             toggleWelcome();
@@ -2042,6 +2079,8 @@ namespace sl::menu::ui {
                             y + (rh - lh) / 2, t.accent, val);
                 m_gfx->TextCentered(FontSize::Small, W / 2, y + rh + 26, t.dim,
                                     T("Everything here can be changed later in Theming."));
+                m_gfx->TextCentered(FontSize::Small, W / 2, y + rh + 66, t.dim,
+                                    T("sLaunch counts how many consoles are online with a random ID. Theming > Online count turns it off."));
                 DrawHint({ {{"left","right"}, "Change"}, {{"a"}, "Finish"}, {{"b"}, "Back"} });
                 break;
             }
@@ -2098,7 +2137,7 @@ namespace sl::menu::ui {
             if (i == TH_ShelfVert && (m_ui_mode != UiMode::Shelf || m_shelf_ps)) continue;
             if (i == TH_ShelfStyle && m_ui_mode != UiMode::Shelf) continue;
             if (i == TH_Backdrop && m_ui_mode != UiMode::Shelf && m_ui_mode != UiMode::Line &&
-                m_ui_mode != UiMode::Cover) continue;
+                m_ui_mode != UiMode::Cover && m_ui_mode != UiMode::Deck) continue;
             // The wall shape is only meaningful where there is a wall.
             if ((i == TH_TileCols || i == TH_TileRows) && m_ui_mode != UiMode::Grid) continue;
             v.push_back(i);
@@ -2134,12 +2173,12 @@ namespace sl::menu::ui {
             T("Columns"), T("Rows"),
             T("Box art region"), T("SteamGridDB"), T("SteamGridDB key"), T("Flow layout"),
             T("Wrap around"), T("Button hints"), T("Position counter"),
-            T("RetroArch games"), T("Shortcuts everywhere"),
+            T("RetroArch games"), T("Shortcuts everywhere"), T("Collections"),
             T("Fonts"), T("Language"),
             T("Music"), T("Widgets"),
             T("Menu entries"),
             T("Screen timeout"), T("Screen timeout (TV)"), T("Ask who's playing"),
-            T("Welcome screen"), T("Check for updates"),
+            T("Welcome screen"), T("Check for updates"), T("Online count"),
             T("About"), T("Back")
         };
         std::vector<std::string> values(labels.size());
@@ -2166,6 +2205,7 @@ namespace sl::menu::ui {
         values[TH_Hints]       = m_show_hints ? T("On") : T("Off");
         values[TH_Counter]     = m_show_counter ? T("On") : T("Off");
         values[TH_Shortcuts]   = m_shortcuts_everywhere ? T("On") : T("Off");
+        values[TH_Collections] = m_collections ? T("On") : T("Off");
         values[TH_RetroArch]   = m_retroarch ? T("On") : T("Off");
         values[TH_TdbRegion]   = kTdbRegions[std::clamp(m_tdb_region, 0, kTdbRegionCount - 1)];
         values[TH_Sgdb]        = m_sgdb_enabled ? T("On") : T("Off");
@@ -2178,6 +2218,7 @@ namespace sl::menu::ui {
         values[TH_AskUser]     = AskUserEnabled() ? T("On") : T("Off");
         values[TH_Welcome]     = m_welcome_enabled ? T("On") : T("Off");
         values[TH_Updates]     = m_check_updates ? T("On") : T("Off");
+        values[TH_Online]      = m_online_count ? T("On") : T("Off");
         values[TH_About]       = m_upd_available ? T("Update available") : std::string("v") + SL_VERSION;
         {
             char c[32];

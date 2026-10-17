@@ -129,7 +129,7 @@ namespace sl::menu::ui {
             }
         }
 
-        DrawStatusHint({ {{"a"}, "Select"}, {{"x"}, "Options"} });
+        DrawStatusHint({ {{"a"}, "Select"}, {{"y"}, "Search"}, {{"x"}, "Options"} });
     }
     // One item as a card: its artwork (or the themed plate with the glyph,
     // or a panel with the initial), rounded, shadowed, glowing when selected,
@@ -368,6 +368,6 @@ namespace sl::menu::ui {
         if (!m_show_counter) pos[0] = '\0';
         m_gfx->TextCentered(FontSize::Small, center_x, name_y + 48, t.dim, pos);
 
-        DrawStatusHint({ {{"a"}, "Select"}, {{"x"}, "Options"} });
+        DrawStatusHint({ {{"a"}, "Select"}, {{"y"}, "Search"}, {{"x"}, "Options"} });
     }
 } // namespace sl::menu::ui

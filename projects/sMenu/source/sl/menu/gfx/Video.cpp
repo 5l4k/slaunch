@@ -425,7 +425,12 @@ namespace sl::menu::gfx {
             }
 
             if (have_frame) {
-                if (ClockNow() < frame_pts) { svcSleepThread(2'000'000); continue; }
+                const double now = ClockNow();
+                if (now < frame_pts) { svcSleepThread(2'000'000); continue; }
+                // Far behind: the system tick kept running through console sleep (or
+                // something else stalled us). Pick up from this frame instead of
+                // fast-forwarding through everything we missed.
+                if (now - frame_pts > 0.5) ClockSet(frame_pts);
 
                 AVFrame *src = dec_frame;
 #ifdef SL_HAS_NVTEGRA

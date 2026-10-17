@@ -113,6 +113,8 @@ namespace sl::smi {
         Kb_Search,        // filter the main list by name
         Kb_FileRename,    // file manager: rename the selected file
         Kb_NewFolder,     // file manager: name a new folder
+        Kb_CollNew,       // name a new collection
+        Kb_CollRename,    // rename a collection
     };
     constexpr const char *KbRequestPath = "sdmc:/slaunch/config/kb_req.txt";
     constexpr const char *KbResultPath  = "sdmc:/slaunch/config/kb_result.txt";

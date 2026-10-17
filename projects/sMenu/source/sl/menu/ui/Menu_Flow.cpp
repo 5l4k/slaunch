@@ -1665,6 +1665,6 @@ namespace sl::menu::ui {
         }
 
         DrawFetchStatus();
-        DrawStatusHint({ {{"a"}, "Launch"}, {{"x"}, "Options"}, {{"minus"}, "Menu"}, {{"rstick"}, "Look/Turn"} });
+        DrawStatusHint({ {{"a"}, "Launch"}, {{"y"}, "Search"}, {{"x"}, "Options"}, {{"minus"}, "Menu"}, {{"rstick"}, "Look/Turn"} });
     }
 } // namespace sl::menu::ui

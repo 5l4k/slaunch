@@ -727,6 +727,6 @@ namespace sl::menu::ui {
         if (sel.kind == ItemKind::MusicPlayer)
             DrawStatusHint({ {{"a"}, "Open"}, {{"y"}, "Play/pause"}, {{"x"}, "Options"} });
         else
-            DrawStatusHint({ {{"a"}, "Select"}, {{"x"}, "Options"} });
+            DrawStatusHint({ {{"a"}, "Select"}, {{"y"}, "Search"}, {{"x"}, "Options"} });
     }
 } // namespace sl::menu::ui

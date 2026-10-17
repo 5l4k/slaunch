@@ -533,3 +533,15 @@ Many Atmosphere sysmodules inject into the HOME Menu, which sLaunch replaces. Be
 No sysmodules start at boot. You're good to go.=Keine Sysmodule starten beim Booten. Alles bereit.
 Starting at boot on this console:=Beim Booten aktiv auf dieser Konsole:
 Sysmodules that hook into the HOME Menu are the most common cause of crashes and freezes with sLaunch. Turn them off in the Sysmodules overlay and restart. Starting at boot:=Sysmodule, die sich ins HOME-Menü einklinken, sind die häufigste Ursache für Abstürze und Einfrieren mit sLaunch. Schalte sie im Sysmodules-Overlay aus und starte neu. Beim Booten aktiv:
+B: Clear search=B: Suche löschen
+B: Back=B: Zurück
+New collection=Neue Sammlung
+Delete collection=Sammlung löschen
+Collections=Sammlungen
+Collection deleted=Sammlung gelöscht
+Collection created=Sammlung erstellt
+X on a game: Collections > New collection=X auf einem Spiel: Sammlungen > Neue Sammlung
+Online count=Online-Zähler
+sLaunch counts how many consoles are online with a random ID. Theming > Online count turns it off.=sLaunch zählt mit einer zufälligen ID, wie viele Konsolen online sind. Unter Theming > Online-Zähler abschaltbar.
+Update available:=Update verfügbar:
+see Theming > About=siehe Theming > About

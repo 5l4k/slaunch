@@ -176,7 +176,7 @@ namespace sl::menu::ui {
 
         if (tall && m_scroll_pos == (float)m_cursor) FetchArtFor(m_items[m_cursor]);
         DrawFetchStatus();
-        DrawStatusHint({ {{"a"}, "Launch"}, {{"x"}, "Options"} });
+        DrawStatusHint({ {{"a"}, "Launch"}, {{"y"}, "Search"}, {{"x"}, "Options"} });
     }
 
     // Shelf, PS4 style (the default): the PS4 home screen's content row. The
@@ -273,6 +273,6 @@ namespace sl::menu::ui {
         }
 
         DrawFetchStatus();
-        DrawStatusHint({ {{"a"}, "Launch"}, {{"x"}, "Options"} });
+        DrawStatusHint({ {{"a"}, "Launch"}, {{"y"}, "Search"}, {{"x"}, "Options"} });
     }
 } // namespace sl::menu::ui

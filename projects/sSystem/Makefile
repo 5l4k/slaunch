@@ -30,7 +30,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 # App metadata
 APP_TITLE   := sSystem
 APP_AUTHOR  := sLaunch
-APP_VERSION := 1.5.4
+APP_VERSION := 1.5.5
 
 #---------------------------------------------------------------------------------
 # Compiler flags

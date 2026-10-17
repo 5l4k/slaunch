@@ -60,6 +60,7 @@ namespace sl::menu::ui {
         WidgetTile,
         FileManager,   // browse and manage the SD card (Menu_Files.cpp)
         Bluetooth,     // radio on/off and audio device pairing (Menu_Screens.cpp)
+        Collection,    // a user collection; A opens it (opt-in, Theming)
     };
 
     // What the box-art worker is doing (see Menu::DrawFetchStatus). Stages run
@@ -387,6 +388,16 @@ namespace sl::menu::ui {
         bool   m_upd_available = false;
         std::string m_upd_latest;         // e.g. "v0.6.0" when an update is found
         int    m_about_scroll  = 0;       // first visible changelog line in About
+        // Anonymous online count (opt-out, Theming). While the menu is up it
+        // posts a random install id and the version every few minutes; the
+        // server only counts distinct ids. Nothing else is sent.
+        static void PingTrampoline(void *self);
+        void   PollPing();
+        Thread m_ping_thread{};
+        bool   m_ping_running = false;
+        std::atomic<bool> m_ping_done{false};
+        u64    m_ping_tick    = 0;
+        bool   m_online_count = true;     // setting (persisted)
         Action OnButtonThemes(Btn b);
         Action OnButtonEditor(Btn b);
         Action OnButtonColorPicker(Btn b);
@@ -673,6 +684,12 @@ namespace sl::menu::ui {
         // HeroArt's own definition, Menu_Deck.cpp.
         std::unordered_map<u64, SDL_Texture *> m_hero_art;
         SDL_Texture *HeroArt(const MenuItem &it);
+        // Blurred cover behind an upright cover on the wide Deck tile (cached
+        // for one entry; Blurred makes a new texture every call).
+        SDL_Texture *DeckHeroFill(const MenuItem &it, SDL_Texture *cov);
+        std::string  m_deck_fill_key;
+        SDL_Texture *m_deck_fill = nullptr;
+        int  DeckLibTabCount() const;
         int m_cover_budget  = 6;  // finished art to upload this frame
         // Set every time a cover is decoded, so the notice shows only while the
         // cache is actually being built and disappears on its own after.
@@ -1137,6 +1154,18 @@ namespace sl::menu::ui {
         // persisted: a menu that opened still filtered, with no obvious way
         // back, would read as a menu that had lost your games.
         std::string m_search;
+        // Collections (opt-in): named lists of ItemKeys, per user. Shown as
+        // folder entries; opening one filters the list to its members, the
+        // same way a search does. Not persisted, like the search.
+        struct Collection { std::string name; std::vector<std::string> keys; };
+        bool        m_collections = false;   // setting (persisted)
+        std::vector<Collection> m_colls;
+        std::string m_coll_open;              // empty = not inside one
+        std::string m_kb_key;                 // ItemKey for Kb_CollNew
+        void LoadCollections();
+        void SaveCollections();
+        int  CollIndex(const std::string &name) const;
+        void OpenCollection(const std::string &name);   // "" closes
         // Periodic memory snapshot; see the trace block in Render().
         bool m_memtrace_on   = false;
         u64  m_memtrace_tick = 0;
@@ -1231,7 +1260,7 @@ namespace sl::menu::ui {
         std::vector<OptionEntry> m_options;
         // Which submenu the overlay is showing instead of the entry's own
         // options. B steps back out of one instead of closing the overlay.
-        enum OptSub { Sub_None = 0, Sub_Widgets };
+        enum OptSub { Sub_None = 0, Sub_Widgets, Sub_Collections };
         int m_options_sub = Sub_None;
         bool m_options_open   = false;
         int  m_options_cursor = 0;
@@ -1412,6 +1441,8 @@ namespace sl::menu::ui {
         char       m_nickname[33] = "Player";
         char       m_status[128]  = "";
         u64        m_status_tick  = 0;
+        u64        m_status_secs  = 3;   // how long the current status stays up
+        bool       m_upd_told     = false;   // home notice shown for m_upd_latest
 
         static constexpr int VisibleRows = 9;
     };

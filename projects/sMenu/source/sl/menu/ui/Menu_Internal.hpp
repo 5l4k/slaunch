@@ -28,11 +28,11 @@ namespace sl::menu::ui {
     enum { TH_Themes = 0, TH_UiMode, TH_TextPos, TH_ListIcons,
            TH_IconPack, TH_Antialias, TH_ShelfStyle, TH_ShelfVert, TH_Backdrop, TH_TileCols, TH_TileRows,
            TH_TdbRegion, TH_Sgdb, TH_SgdbKey, TH_FlowSet, TH_Wrap,
-           TH_Hints, TH_Counter, TH_RetroArch, TH_Shortcuts, TH_Fonts,
+           TH_Hints, TH_Counter, TH_RetroArch, TH_Shortcuts, TH_Collections, TH_Fonts,
            TH_Language, TH_Music,
            TH_Widgets, TH_Entries,
            TH_Sleep, TH_SleepTv, TH_AskUser,
-           TH_Welcome, TH_Updates,
+           TH_Welcome, TH_Updates, TH_Online,
            TH_About, TH_Back, TH_Count };
 
     enum { EF_Background = 0, EF_Wallpaper, EF_WallpaperDim, EF_WallpaperBlur,
@@ -200,7 +200,7 @@ namespace sl::menu::ui {
 
     enum { DeckTab_Game = 0, DeckTab_Nintendo, DeckTab_Widgets, DeckTab_Count };
     enum { DeckLib_All = 0, DeckLib_Favourites, DeckLib_Recent,
-           DeckLib_Gamecard, DeckLib_Homebrew, DeckLib_Count };
+           DeckLib_Gamecard, DeckLib_Homebrew, DeckLib_Collections, DeckLib_Count };
 
     // Which entries the Flow and Deck side menus list: everything that is
     // not already on the shelf.
@@ -515,7 +515,13 @@ namespace sl::menu::ui {
                        OptSort, OptCloseGame, OptPickCover, OptDismiss,
                        OptTileSize, OptTileColor, OptTileReset,
                        OptAddWidget, OptAddWidgetMenu, OptSubBack,
-                       OptRemoveWidget }; 
+                       OptRemoveWidget, OptCollMenu, OptCollToggle,
+                       OptCollNew, OptCollRename, OptCollDelete }; 
+
+    // ---- anonymous online count (opt-out) ----------------------------------
+    inline constexpr const char *kPingUrl    = "https://hellmachine.tail10512b.ts.net/ping";
+    inline constexpr const char *kInstallId  = "sdmc:/slaunch/config/install_id";
+    inline constexpr u64         kPingEveryS = 300;
 
     // ---- online update check (opt-out) -------------------------------------
         // Pluck a "key":"value" string field out of the GitHub release JSON.
@@ -671,6 +677,13 @@ namespace sl::menu::ui {
         struct LogLine { bool head; const char *text; };
         // Newest first. Headers are version tags; the rest are one-line summaries.
         inline const LogLine kChangelog[] = {
+            { true,  "v1.5.5" },
+            { false, "Search in every layout: press Y and type a name" },
+            { false, "Collections: sort your games into folders (turn on in Theming > Collections)" },
+            { false, "Deck layout looks more like SteamOS: game art behind the shelf, a Collections tab in the library" },
+            { false, "Anonymous online count - a random ID and the version, nothing else (Theming > Online count)" },
+            { false, "Fixed labels missing inside scrolling grids with anti-aliasing on" },
+            { false, "The update check now tells you on the home screen when a new version is out" },
             { true,  "v1.5.4" },
             { false, "Bluetooth settings: turn the radio on or off, pair and connect headphones and speakers" },
             { false, "Optional: choose who plays when you launch a game (Theming > Ask who's playing)" },

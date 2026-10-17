@@ -510,9 +510,19 @@ namespace sl::menu::gfx {
         if (m_ss == 1) { TTF_DrawRendererText(t, (float)x, (float)y); return; }
         float sx = 1.0f, sy = 1.0f;
         SDL_GetRenderScale(m_renderer, &sx, &sy);
+        // The clip rect is in scaled units too, so it has to grow with the
+        // scale change or text inside a clipped region lands outside it.
+        SDL_Rect clip {};
+        const bool clipped = SDL_RenderClipEnabled(m_renderer) &&
+                             SDL_GetRenderClipRect(m_renderer, &clip);
         SDL_SetRenderScale(m_renderer, sx / m_ss, sy / m_ss);
+        if (clipped) {
+            const SDL_Rect big { clip.x * m_ss, clip.y * m_ss, clip.w * m_ss, clip.h * m_ss };
+            SDL_SetRenderClipRect(m_renderer, &big);
+        }
         TTF_DrawRendererText(t, (float)(x * m_ss), (float)(y * m_ss));
         SDL_SetRenderScale(m_renderer, sx, sy);
+        if (clipped) SDL_SetRenderClipRect(m_renderer, &clip);
     }
 
     void Gfx::TextCentered(FontSize s, int cx, int y, SDL_Color c, const char *text) {

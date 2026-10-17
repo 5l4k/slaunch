@@ -99,6 +99,21 @@ namespace sl::menu::ui {
         for (auto &kv : m_news_art)
             if (kv.second) m_gfx->FreeImage(kv.second);
         m_news_art.clear();
+        if (m_deck_fill) { m_gfx->FreeImage(m_deck_fill); m_deck_fill = nullptr; }
+        m_deck_fill_key.clear();
+    }
+    SDL_Texture *Menu::DeckHeroFill(const MenuItem &it, SDL_Texture *cov) {
+        const std::string key = ItemKey(it);
+        if (key != m_deck_fill_key) {
+            if (m_deck_fill) m_gfx->FreeImage(m_deck_fill);
+            m_deck_fill = m_gfx->Blurred(cov, 24);
+            m_deck_fill_key = key;
+        }
+        return m_deck_fill;
+    }
+    // The Collections tab only exists while collections are turned on.
+    int Menu::DeckLibTabCount() const {
+        return m_collections ? DeckLib_Count : DeckLib_Collections;
     }
     // Ask the feed for what the current tab wants, and reap anything that has
     // landed. Called once a frame from the Deck renderer: every request the feed
@@ -117,10 +132,20 @@ namespace sl::menu::ui {
     void Menu::DrawMainDeck() {
         const Theme &t = m_theme.Current();
         m_icons.SetScale(0);
+        DeckSyncCursor();
+        // Steam's home: the selected game's art fills the screen behind the
+        // shelf and sinks into the dark under it, so the cards stay readable.
+        DrawSelectionBackdrop();
+        {
+            const int y0 = kDeckRowY + kDeckRowH / 2, bands = 16;
+            const int bh = (gfx::Gfx::Height - y0) / bands + 1;
+            for (int i = 0; i < bands; i++)
+                m_gfx->FillRect(0, y0 + i * bh, gfx::Gfx::Width, bh,
+                                WithAlpha(t.bg_bottom, (Uint8)(30 + i * 13)));
+        }
         DrawTopBar(nullptr);
 
         if (m_items.empty()) { DrawMainEmpty(); return; }
-        DeckSyncCursor();
         DeckPollNews();
 
         const bool row_games = (m_deck_row == 0);
@@ -192,6 +217,12 @@ namespace sl::menu::ui {
                 if (wide) {
                     m_gfx->DrawImage(wide, x, kDeckRowY, w, kDeckRowH, 255);
                 } else if (SDL_Texture *cov = FlowCover(it)) {
+                    // No banner: the cover over a blurred, darkened copy of
+                    // itself, the way Steam fills a capsule it has no art for.
+                    if (SDL_Texture *fill = DeckHeroFill(it, cov)) {
+                        m_gfx->DrawImage(fill, x, kDeckRowY, w, kDeckRowH, 255);
+                        m_gfx->FillRect(x, kDeckRowY, w, kDeckRowH, WithAlpha(t.bg_bottom, 90));
+                    }
                     const int cw = (kDeckRowH * 2) / 3;
                     m_gfx->DrawImage(cov, x + (w - cw) / 2, kDeckRowY, cw, kDeckRowH, 255);
                 } else {
@@ -284,7 +315,8 @@ namespace sl::menu::ui {
                 w[i] = m_gfx->TextWidth(FontSize::Normal, labels[i]) + 44;
                 total += w[i];
             }
-            int x = (gfx::Gfx::Width - total) / 2;
+            (void)total;
+            int x = kDeckRowX;   // left-aligned, as on the Deck
             for (int i = 0; i < DeckTab_Count; i++) {
                 const bool on  = (i == m_deck_tab);
                 const bool foc = on && m_deck_row == 1;
@@ -387,6 +419,10 @@ namespace sl::menu::ui {
         // hint of its own over the top.
         if (!m_items.empty() && !ScrollBusy()) FetchArtFor(m_items[m_cursor]);
         if (!m_deck_backdrop) {
+            // Steam's footer: a dark strip the button prompts sit on.
+            m_gfx->FillRect(0, kHintY - 8, gfx::Gfx::Width, gfx::Gfx::Height - kHintY + 8,
+                            WithAlpha(t.bg_bottom, 215));
+            m_gfx->FillRect(0, kHintY - 8, gfx::Gfx::Width, 1, WithAlpha(t.fg, 30));
             DrawFetchStatus();
             DrawStatusHint({ {{"a"}, "Open"}, {{"y"}, "Library"}, {{"minus"}, "Menu"}, {{"x"}, "Options"} });
         }
@@ -509,6 +545,13 @@ namespace sl::menu::ui {
         out.clear();
         for (int i = 0; i < (int)m_items.size(); i++) {
             const MenuItem &it = m_items[i];
+            // Collections: the folders, or the open one's games.
+            if (m_deck_lib_tab == DeckLib_Collections) {
+                const bool member = it.kind == ItemKind::Game || it.kind == ItemKind::Homebrew;
+                if (m_coll_open.empty() ? it.kind == ItemKind::Collection : member)
+                    out.push_back(i);
+                continue;
+            }
             const bool game = (it.kind == ItemKind::Game);
             const bool hb   = (it.kind == ItemKind::Homebrew);
             if (!game && !hb) continue;
@@ -538,6 +581,7 @@ namespace sl::menu::ui {
     }
     void Menu::DrawDeckLibrary() {
         const Theme &t = m_theme.Current();
+        if (m_deck_lib_tab >= DeckLibTabCount()) m_deck_lib_tab = DeckLib_All;
         m_icons.SetScale(0);
         DrawTopBar(nullptr);
 
@@ -548,14 +592,17 @@ namespace sl::menu::ui {
 
         // ---- tabs, with their counts, and the shoulder chips that page them --
         {
+            const int ntab = DeckLibTabCount();
             const char *labels[DeckLib_Count] = { T("All games"), T("Favourites"),
                                                   T("Recent"), T("Game card"),
-                                                  T("Homebrew") };
+                                                  T("Homebrew"),
+                                                  m_coll_open.empty() ? T("Collections")
+                                                                      : m_coll_open.c_str() };
             // Every tab's count, so the row reads the same whichever is open.
             const int save = m_deck_lib_tab;
-            int counts[DeckLib_Count];
+            int counts[DeckLib_Count] = {};
             std::vector<int> tmp;
-            for (int i = 0; i < DeckLib_Count; i++) {
+            for (int i = 0; i < ntab; i++) {
                 const_cast<Menu *>(this)->m_deck_lib_tab = i;
                 DeckLibraryList(tmp);
                 counts[i] = (int)tmp.size();
@@ -564,15 +611,21 @@ namespace sl::menu::ui {
 
             int w[DeckLib_Count], total = 0;
             char buf[64];
-            for (int i = 0; i < DeckLib_Count; i++) {
-                snprintf(buf, sizeof(buf), "%s  %d", labels[i], counts[i]);
-                w[i] = m_gfx->TextWidth(FontSize::Normal, buf) + 36;
+            for (int i = 0; i < ntab; i++) {
+                if (i == m_deck_lib_tab) snprintf(buf, sizeof(buf), "%s  %d", labels[i], counts[i]);
+                else                     snprintf(buf, sizeof(buf), "%s", labels[i]);
+                w[i] = m_gfx->TextWidth(FontSize::Normal, buf);
                 total += w[i];
             }
+            // Padding shrinks to fit between the L/R chips once the
+            // Collections tab makes it six.
+            const int pad = std::clamp((gfx::Gfx::Width - 200 - total) / std::max(1, ntab), 12, 36);
+            for (int i = 0; i < ntab; i++) { w[i] += pad; total += pad; }
             int x = (gfx::Gfx::Width - total) / 2;
-            for (int i = 0; i < DeckLib_Count; i++) {
-                snprintf(buf, sizeof(buf), "%s  %d", labels[i], counts[i]);
+            for (int i = 0; i < ntab; i++) {
                 const bool on = (i == m_deck_lib_tab);
+                if (on) snprintf(buf, sizeof(buf), "%s  %d", labels[i], counts[i]);
+                else    snprintf(buf, sizeof(buf), "%s", labels[i]);
                 if (on) m_gfx->FillRect(x, 78, w[i], kDeckTabH, WithAlpha(t.fg, 42));
                 m_gfx->TextCentered(FontSize::Normal, x + w[i] / 2, 80,
                                     on ? t.fg : t.dim, buf);
@@ -636,7 +689,12 @@ namespace sl::menu::ui {
             const bool sel = (i == m_deck_lib_cursor);
 
             m_gfx->FillRect(x, y, kDeckLibW, kDeckLibH, WithAlpha(t.bg_bottom, 230));
-            if (SDL_Texture *cov = FlowCover(it))
+            if (it.kind == ItemKind::Collection) {
+                const int sq = kDeckLibW - 40;
+                DrawAppTile(it, x + 20, y + 30, sq, false, 255);
+                m_gfx->TextCentered(FontSize::Small, x + kDeckLibW / 2, y + kDeckLibH - 40, t.fg,
+                                    Ellipsize(it.name, kDeckLibW - 12, FontSize::Small).c_str());
+            } else if (SDL_Texture *cov = FlowCover(it))
                 m_gfx->DrawImage(cov, x, y, kDeckLibW, kDeckLibH, 255);
             else
                 DrawAppTile(it, x, y + (kDeckLibH - kDeckLibW) / 2, kDeckLibW,
@@ -662,10 +720,19 @@ namespace sl::menu::ui {
         DeckLibraryList(list);
         const int n = (int)list.size();
 
-        if (b == Btn::B) { m_screen = Screen::Main; return Action::None; }
+        if (b == Btn::B) {
+            if (!m_coll_open.empty()) {   // out of the collection, back to the folders
+                OpenCollection("");
+                m_deck_lib_cursor = 0;
+                return Action::None;
+            }
+            m_screen = Screen::Main;
+            return Action::None;
+        }
         if (b == Btn::L || b == Btn::R) {
-            m_deck_lib_tab = (m_deck_lib_tab + (b == Btn::R ? 1 : DeckLib_Count - 1))
-                             % DeckLib_Count;
+            if (!m_coll_open.empty()) OpenCollection("");
+            const int ntab = DeckLibTabCount();
+            m_deck_lib_tab = (m_deck_lib_tab + (b == Btn::R ? 1 : ntab - 1)) % ntab;
             m_deck_lib_cursor = 0;
             m_deck_lib_scroll = 0.0f;
             m_sfx.Play(b == Btn::R ? audio::Sfx::PageRight : audio::Sfx::PageLeft);
@@ -685,6 +752,12 @@ namespace sl::menu::ui {
                              else m_deck_lib_cursor = n - 1;
                              break;
             case Btn::A: {
+                if (m_items[list[m_deck_lib_cursor]].kind == ItemKind::Collection) {
+                    OpenCollection(m_items[list[m_deck_lib_cursor]].name);
+                    m_deck_lib_cursor = 0;
+                    m_deck_lib_scroll = 0.0f;
+                    return Action::None;
+                }
                 // Hand off to the shared handler: it already knows what every
                 // kind does, including the "close the running game first"
                 // dialog, so this screen only decides which entry.
@@ -918,7 +991,8 @@ namespace sl::menu::ui {
                 w[i] = m_gfx->TextWidth(FontSize::Normal, labels[i]) + 44;
                 total += w[i];
             }
-            int x = (gfx::Gfx::Width - total) / 2;
+            (void)total;
+            int x = kDeckRowX;   // left-aligned, as on the Deck
             for (int i = 0; i < DeckTab_Count; i++) {
                 if (px >= x && px < x + w[i]) {
                     if (i != m_deck_tab) { m_deck_tab = i; m_deck_card = 0; }
