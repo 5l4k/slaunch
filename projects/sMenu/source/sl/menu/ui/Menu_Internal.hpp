@@ -677,7 +677,7 @@ namespace sl::menu::ui {
         struct LogLine { bool head; const char *text; };
         // Newest first. Headers are version tags; the rest are one-line summaries.
         inline const LogLine kChangelog[] = {
-            { true,  "v1.5.6" },
+            { true,  "v1.5.7" },
             { false, "Folders: X on a game > Collections files it in a folder, and each folder shows its first four games in every layout" },
             { false, "Hide games you never play (X > Hide); Theming > Show hidden games brings them back" },
             { false, "The menu recovers from a crash on its own instead of stopping the console with an error, with widgets and anti-aliasing off until it runs cleanly" },
