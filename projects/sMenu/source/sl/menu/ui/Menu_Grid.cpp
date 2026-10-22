@@ -445,7 +445,7 @@ namespace sl::menu::ui {
         // natural height instead and gets scaled to fit, which is why an old
         // widget still works - it just does not fill the tile.
         if (!m_tile_wscratch) {
-            m_tile_wscratch = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
+            m_tile_wscratch = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,
                                                 SDL_TEXTUREACCESS_TARGET,
                                                 kTileWidgetW, gfx::Gfx::Height);
             if (!m_tile_wscratch) return;
@@ -579,12 +579,11 @@ namespace sl::menu::ui {
                     m_gfx->DrawImage(m_tile_pic_next, r.x, r.y, r.w, r.h,
                                      (Uint8)(a * m_tile_pic_fade));
             }
-        } else if (it.kind == ItemKind::Game || it.kind == ItemKind::Homebrew) {
+        } else if (it.kind == ItemKind::Game || it.kind == ItemKind::Homebrew ||
+                   (it.kind == ItemKind::Collection && ItemArt(it))) {
             // A game's own icon fills the tile, which is what gives the wall its
             // colour - the same job Metro gave photo and people tiles.
-            SDL_Texture *icon = (it.kind == ItemKind::Homebrew)
-                                  ? m_hb_icons.Get(it.hb_icon)
-                                  : m_icons.Get(it.app_id);
+            SDL_Texture *icon = ItemArt(it);
             // Picking a colour for a game turns its tile into the other kind of
             // Windows 8 tile: a solid block with the app's logo inset, rather
             // than artwork edge to edge. Without this the choice would be

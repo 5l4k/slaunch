@@ -3,6 +3,7 @@
 // titles or system applets itself, asks the sSystem daemon (which runs as
 // qlaunch) to do so over the SMI protocol.
 
+#include <sl/menu/dbg/Crash.hpp>
 #include <switch.h>
 #include <SDL3/SDL.h>
 #include <cstring>
@@ -120,7 +121,7 @@ static void MarkSetupDone() {
 // ---------------------------------------------------------------------------
 enum SwitchJoyButton {
     JOY_A = 0, JOY_B = 1, JOY_X = 2, JOY_Y = 3,
-    JOY_L = 6, JOY_R = 7, JOY_PLUS = 10, JOY_MINUS = 11,
+    JOY_L = 6, JOY_R = 7, JOY_ZL = 8, JOY_ZR = 9, JOY_PLUS = 10, JOY_MINUS = 11,
     JOY_DLEFT = 12, JOY_DUP = 13, JOY_DRIGHT = 14, JOY_DDOWN = 15,
 };
 static Btn TranslateButton(int b) {
@@ -333,6 +334,16 @@ static void LoadAppsTrampoline(void *) {
 // Show the full-screen warning; the daemon reboots the console shortly after.
 static void OnSdEjected()      { if (g_UI) g_UI->ShowSdRemoved(); }
 static void OnAppListChanged() { g_NeedAppReload = true; }
+// The daemon says the console is going to sleep: draw nothing until it says
+// it woke up (or am reports a resume, or any input arrives - a lost
+// SleepFinished must not leave the menu frozen). Presenting while vi and
+// nvservices power down is what took vi down on wake (issue #13).
+static bool g_Asleep = false;
+static void OnSleepRequested() { g_Asleep = true; BootLog("applet: sleep requested, presenting paused"); }
+static void OnSleepFinished()  { if (g_Asleep) BootLog("applet: woke up, presenting again"); g_Asleep = false; }
+static void OnAppletHook(AppletHookType hook, void *) {
+    if (hook == AppletHookType_OnResume) OnSleepFinished();
+}
 
 // ---------------------------------------------------------------------------
 // libnx internals: normally called by libnx's default __appInit, which we
@@ -534,6 +545,20 @@ int main() {
         BootLog("applet: config dir %s", menu::cfg::Dir().c_str());
     }
 
+    // Crashes in a row (Crash.cpp counts them). From kSafeModeCrashes on, this
+    // run leaves out what has the most room to go wrong - anti-aliasing and
+    // the Lua widgets - so a bad setting or widget cannot crash-loop the
+    // console. Nothing is written to the settings: the next clean run is back
+    // to normal.
+    int crashes = 0;
+    if (FILE *cf = fopen(menu::dbg::kCrashCountPath, "r")) {
+        if (fscanf(cf, "%d", &crashes) != 1) crashes = 0;
+        fclose(cf);
+    }
+    const bool safe_mode = crashes >= menu::dbg::kSafeModeCrashes;
+    if (crashes) BootLog("applet: %d crash(es) in a row before this run%s", crashes,
+                         safe_mode ? " - safe mode" : "");
+
     menu::gfx::Gfx gfx;
     // Read straight from the config rather than through Menu: the renderer has
     // to be built with this already decided, and Menu is not constructed until
@@ -569,7 +594,7 @@ int main() {
                 if (FILE *m = fopen(AaMarker, "w")) { fputs("1\n", m); fclose(m); }
             }
         }
-        gfx.SetAntialias(want_aa);
+        gfx.SetAntialias(want_aa && !safe_mode);
     }
     if (!gfx.Init()) {
         BootLog("applet: gfx.Init FAILED: %s", SDL_GetError());
@@ -595,8 +620,11 @@ int main() {
     {
     Menu ui;
     g_UI = &ui;
+    ui.SetSafeMode(safe_mode);
     ui.Init(&gfx, status.selected_user, status.suspended_app_id, IsFirstRun());
     BootLog("applet: ui.Init done");
+    if (safe_mode)
+        ui.SetStatus(menu::ui::T("The menu crashed and restarted: widgets and anti-aliasing are off until it runs cleanly"));
 
     // Instant: show last run's cached game list on the very first frame. The
     // background loader then just verifies the ids and only re-resolves if the
@@ -620,6 +648,10 @@ int main() {
     menu::smi::MessageCallbacks cbs;
     cbs.on_sd_ejected       = OnSdEjected;
     cbs.on_app_list_changed = OnAppListChanged;
+    cbs.on_sleep_requested  = OnSleepRequested;
+    cbs.on_sleep_finished   = OnSleepFinished;
+    AppletHookCookie sleep_hook;
+    appletHook(&sleep_hook, OnAppletHook, nullptr);
 
     g_NeedAppReload = true;
     constexpr int Deadzone = 20000;
@@ -691,6 +723,7 @@ int main() {
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_EVENT_QUIT) { g_Running = false; continue; }
             if (ev.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN) {
+                OnSleepFinished();   // a button press means we are awake
                 Btn b = TranslateButton(ev.jbutton.button);
                 // L + R + Minus toggles the developer overlay. Checked on the
                 // Minus press with L and R polled as held state, so the combo
@@ -779,6 +812,7 @@ int main() {
                 return (f < -1.0f) ? -1.0f : (f > 1.0f ? 1.0f : f);
             };
             ui.SetRightStick(norm(rx), norm(ry));
+            ui.SetTriggers(SDL_GetJoystickButton(joy, JOY_ZL) && SDL_GetJoystickButton(joy, JOY_ZR));
         }
         const u64 now = armGetSystemTick();
         auto step = [&](int dir, int &held, u64 &next, u64 &start, Btn neg, Btn pos) {
@@ -803,6 +837,7 @@ int main() {
         };
         step(dir_v, held_v, next_v, start_v, Btn::Up,   Btn::Down);
         step(dir_h, held_h, next_h, start_h, Btn::Left, Btn::Right);
+        if (g_Asleep) { svcSleepThread(16'666'666ULL); continue; }
         ui.Render();
         // An action the menu held back to animate first (the Flow launch
         // bounce). Dispatched exactly like an OnButton result.
@@ -813,7 +848,8 @@ int main() {
         if (!first_frame_logged) {
             first_frame_logged = true;
             BootLog("applet: first frame drawn");
-            menu::usb::MtpStart();   // USB file transfer, for as long as the menu is up
+            if (ui.UsbTransfer())    // USB file transfer, for as long as the menu is up
+                menu::usb::MtpStart();
         }
         // A computer plugged in: say so once, and keep the console awake while
         // it stays connected so a long copy is not cut off by auto-sleep.
@@ -830,11 +866,18 @@ int main() {
         // with works. Clearing the marker is what lets anti-aliasing stay on
         // across runs; leaving it would disarm the setting every time.
         if (!aa_confirmed) { aa_confirmed = true; remove(AaMarker); }
+        // A minute up is a run that did not crash: the count starts over.
+        static const u64 start_tick = armGetSystemTick();
+        if (crashes && armGetSystemTick() - start_tick > armGetSystemTickFreq() * 60) {
+            remove(menu::dbg::kCrashCountPath);
+            crashes = 0;
+        }
         // First frame is up; now do the heavier init (widgets) off the hot path.
         ui.InitDeferred();
     }
     // Let go of USB before handing off: whatever runs next (homebrew like DBI
     // or Goldleaf especially) may want it for itself.
+    appletUnhook(&sleep_hook);
     menu::usb::MtpStop();
     if (usb_connected) appletSetAutoSleepDisabled(false);
     } // ui destroyed here, before gfx.Exit(), so its textures free cleanly

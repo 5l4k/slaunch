@@ -378,6 +378,7 @@ int main(int argc, char **argv) {
         int  mouse_x = 0, mouse_y = 0;
         bool was_touching = false;
         int  last_tx = 0, last_ty = 0;
+        u64  trig_until = 0;             // --nav 't' holds both triggers until then
 
         while (running) {
             SDL_Event ev;
@@ -459,6 +460,9 @@ int main(int argc, char **argv) {
                 }
                 dir_v = up ? -1 : down ? 1 : 0;
                 dir_h = left ? -1 : right ? 1 : 0;
+                bool trig = ks[SDL_SCANCODE_T] || elapsed_ms() < trig_until;
+                if (joy) trig |= SDL_GetJoystickButton(joy, 8) && SDL_GetJoystickButton(joy, 9);
+                ui.SetTriggers(trig);
             }
 
             const u64 now = armGetSystemTick();
@@ -499,6 +503,7 @@ int main(int argc, char **argv) {
                     case 'm': b = Btn::Minus; break;
                     case '[': b = Btn::L;     break;
                     case ']': b = Btn::R;     break;
+                    case 't': trig_until = elapsed_ms() + 1300; break;   // hold ZL+ZR
                     default:  break;
                 }
                 nav_i++;

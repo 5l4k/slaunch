@@ -68,6 +68,7 @@ static constexpr u64 MenuFastExitMs = 3000;
 static int  g_MenuFastExits  = 0;
 
 static void LaunchMenu();   // defined below
+static void SleepWithMenu();
 
 // Writes (or appends to) a file on the SD card through the raw fs API, not
 // stdio. The fallback for when fopen fails: on some consoles every stdio write
@@ -276,7 +277,7 @@ static void DispatchCommand(SystemMessage msg, const void *payload) {
             break;
         case SystemMessage::OpenPowerMenu:   // legacy opcode: plain sleep
         case SystemMessage::PowerSleep:
-            pwr::Sleep();
+            SleepWithMenu();
             break;
 
         // Reboot / shutdown / chainload tear the whole system down, so they wait
@@ -340,6 +341,23 @@ enum SystemAppletMessage : u32 {
     Msg_AutoPowerDown                  = 29,
     Msg_SdCardRemoved                  = 33,
 };
+
+// Theming > "Start as user": an account to boot straight into, skipping the
+// player select. Written by the menu as two hex words; absent = Off. Ignored
+// when that account is no longer on the console.
+static constexpr const char *kAutoUserPath = "sdmc:/slaunch/config/auto_user";
+static bool ReadAutoUser(AccountUid &out) {
+    FILE *f = fopen(kAutoUserPath, "r");
+    if (!f) return false;
+    unsigned long long a = 0, b = 0;
+    const bool got = fscanf(f, "%16llx %16llx", &a, &b) == 2;
+    fclose(f);
+    out.uid[0] = a; out.uid[1] = b;
+    AccountProfile p;
+    if (!got || !accountUidIsValid(&out) || R_FAILED(accountGetProfile(&p, out))) return false;
+    accountProfileClose(&p);
+    return true;
+}
 
 // The system's own "who's playing" screen (the player select applet). False
 // when it was cancelled or could not be shown.
@@ -694,6 +712,21 @@ static void HandleHomeButton() {
     }
 }
 
+// Sleep with the menu told first, so it stops presenting before vi and
+// nvservices power down (a menu drawing through the transition took vi down
+// on wake, issue #13). A few frames is enough for it to see the message; an
+// older menu ignores it and just sleeps as before.
+static void SleepWithMenu() {
+    if (la::IsMenuAlive()) {
+        PushMenuEvent(MenuMessage::SleepRequested);
+        svcSleepThread(70'000'000ULL);
+    }
+    if (const Result rc = pwr::Sleep(); R_FAILED(rc)) {
+        DaemonLog("power: sleep request refused rc=0x%x", rc);
+        if (la::IsMenuAlive()) PushMenuEvent(MenuMessage::SleepFinished);
+    }
+}
+
 // Process system-level applet messages (HOME, power/sleep, ...). Called from the
 // main loop whenever the menu is up or a game is running.
 static void PumpAppletMessages() {
@@ -708,10 +741,12 @@ static void PumpAppletMessages() {
                 DaemonLog("power: %s -> sleep (menu=%d app=%d)",
                           msg == Msg_AutoPowerDown ? "auto power down" : "power button",
                           (int)la::IsMenuAlive(), (int)app::g_AppRunning);
-                if (const Result rc = pwr::Sleep(); R_FAILED(rc))
-                    DaemonLog("power: sleep request refused rc=0x%x", rc);
+                SleepWithMenu();
                 break;
-            case Msg_FinishedSleepSequence:          DaemonLog("power: woke up"); break;
+            case Msg_FinishedSleepSequence:
+                DaemonLog("power: woke up");
+                if (la::IsMenuAlive()) PushMenuEvent(MenuMessage::SleepFinished);
+                break;
             case Msg_SdCardRemoved:                  HandleSdCardRemoved(); break;
             default: break;
         }
@@ -1010,7 +1045,10 @@ namespace ams {
         Result idle_rc = appletLoadAndApplyIdlePolicySettings();
         DaemonLog("daemon: idle policy rc=0x%x", idle_rc);
 
-        accountGetPreselectedUser(&g_SelectedUser);
+        if (ReadAutoUser(g_SelectedUser))
+            DaemonLog("user: starting as the saved account (Start as user)");
+        else
+            accountGetPreselectedUser(&g_SelectedUser);
         if (!accountUidIsValid(&g_SelectedUser)) {
             AccountUid picked;
             if (PickUser(picked)) g_SelectedUser = picked;

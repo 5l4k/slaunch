@@ -184,9 +184,21 @@ namespace sl::sys::app {
         appletApplicationTerminateAllLibraryApplets(&g_AppHolder);
         appletApplicationRequestExit(&g_AppHolder);
 
-        // Wait up to 15 seconds for graceful exit
-        if (R_FAILED(eventWait(&g_AppHolder.StateChangedEvent, 15'000'000'000ULL)))
+        // Up to 15 s for a graceful exit. StateChangedEvent is no proof of
+        // one (it also fires on suspend and stays signalled), so watch for the
+        // application process itself to be gone: closing the holder of an app
+        // that is still running leaves am an application nobody owns, and the
+        // next launch is refused.
+        auto alive = [] { u64 pid = 0; return R_SUCCEEDED(pmshellGetApplicationProcessIdForShell(&pid)); };
+        const u64 hz = armGetSystemTickFreq();
+        u64 deadline = armGetSystemTick() + hz * 15;
+        while (alive() && armGetSystemTick() < deadline) svcSleepThread(50'000'000ULL);
+        if (alive()) {
+            DaemonLog("app: 0x%016lx ignored the exit request - terminating", g_AppId);
             appletApplicationTerminate(&g_AppHolder);
+            deadline = armGetSystemTick() + hz * 3;
+            while (alive() && armGetSystemTick() < deadline) svcSleepThread(50'000'000ULL);
+        }
 
         appletApplicationClose(&g_AppHolder);
         memset(&g_AppHolder, 0, sizeof(g_AppHolder));

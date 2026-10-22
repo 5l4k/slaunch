@@ -199,6 +199,10 @@ namespace sl::menu::ui {
         void SetLoading(bool v) { m_loading = v; }
         // Right stick, pushed in every frame by main(). Only Flow reads it.
         void SetRightStick(float x, float y) { m_rstick_x = x; m_rstick_y = y; }
+        // ZL and ZR both held, polled each frame: a second of it blows the
+        // layout up (Menu_Boom.cpp).
+        void SetTriggers(bool both) { m_trig_held = both; }
+        bool UsbTransfer() const { return m_usb_mtp; }   // start the MTP server at all
         void SetUser(AccountUid uid, const char *nickname);
         void SetStatus(const char *msg);
 
@@ -398,6 +402,7 @@ namespace sl::menu::ui {
         std::atomic<bool> m_ping_done{false};
         u64    m_ping_tick    = 0;
         bool   m_online_count = true;     // setting (persisted)
+        bool   m_usb_mtp = true;          // setting (persisted): USB file transfer (MTP)
         Action OnButtonThemes(Btn b);
         Action OnButtonEditor(Btn b);
         Action OnButtonColorPicker(Btn b);
@@ -636,6 +641,37 @@ namespace sl::menu::ui {
         void DrawMainFlow();         // WiiFlow-style 3D coverflow
         int  FlowItemAt(int px, int py) const;  // box under a touch, or -1
         float m_rstick_x = 0.0f, m_rstick_y = 0.0f;
+
+        // Layout explosion (Menu_Boom.cpp). src: the piece's rect in the
+        // capture atlas; hx,hy: where it sat on screen; x0,y0,a0: where it
+        // was when reassembly began; ride: seconds left travelling with the
+        // scroll before it falls; home_ok: from the first capture, so it has a
+        // place to go back to. depth > 0: a 3D box (images, cards) that
+        // tumbles about rx, ry and breaks on a hard hit; nocrack: seconds
+        // before a fresh fragment may break again.
+    public:
+        struct BoomPiece {
+            SDL_FRect src; float hx, hy, x, y, vx, vy, a, va, x0, y0, a0, delay, ride;
+            float rx, ry, vrx, vry, rx0, ry0, depth, nocrack;
+            bool home_ok, crack;
+        };
+    private:
+        std::vector<BoomPiece> m_boom;
+        std::unordered_set<u64> m_boom_keys;               // what is already flying
+        std::unordered_map<u64, SDL_FPoint> m_boom_prev;   // last capture, for the scroll speed
+        bool  m_trig_held = false, m_trig_spent = false, m_boom_scroll_done = false;
+        u64   m_trig_tick = 0;
+        int   m_boom_state = 0;                            // off, flying, back
+        int   m_boom_scrolled = 0;                         // steps taken, undone on the way back
+        Btn   m_boom_dir = Btn::Down;
+        float m_boom_ox = 0, m_boom_oy = 0, m_boom_vx = 0, m_boom_vy = 0;
+        u64   m_boom_tick = 0, m_boom_last = 0, m_boom_step = 0;
+        void PollBoom();
+        bool DrawBoom();                                   // true: it drew the frame
+        void DrawBoomFire(float t);
+        bool BoomCapture(bool blast);
+        void StepBoom(float dt);
+        void BoomReassemble();
 
         // Animated position of the flow row, in item units.
         float m_flow_scroll = 0.0f;
@@ -1166,6 +1202,28 @@ namespace sl::menu::ui {
         void SaveCollections();
         int  CollIndex(const std::string &name) const;
         void OpenCollection(const std::string &name);   // "" closes
+        // Members of a folder leave the top level; each folder keeps its first
+        // four for the mosaic face (built lazily, rebuilt as icons stream in).
+        struct FolderArt { std::vector<MenuItem> peek; int count = 0;
+                           SDL_Texture *tex = nullptr; int have = 0; SDL_Color plate{}; };
+        std::unordered_map<std::string, FolderArt> m_folder_art;
+        std::vector<MenuItem> m_tucked;       // games filed in folders (Random still picks them)
+        // Hidden games (ItemKeys, per user); Theming > Show hidden brings them back.
+        std::unordered_set<std::string> m_hidden;
+        bool m_show_hidden = false;           // session only
+        void LoadHidden();
+        void SaveHidden();
+        // A game's or homebrew's icon, or a folder's mosaic; nullptr otherwise.
+        SDL_Texture *ItemArt(const MenuItem &it);
+    public:
+        // Started after repeated crashes: no Lua widgets this run.
+        void SetSafeMode(bool on) { m_safe_mode = on; }
+    private:
+        // Keeps the per-title art caches (covers, Deck hero art, box wraps,
+        // back panels) to the titles around the cursor in every layout, and
+        // drops all of it when the heap runs low. See Menu.cpp.
+        void TrimArt();
+        bool m_safe_mode = false;
         // Periodic memory snapshot; see the trace block in Render().
         bool m_memtrace_on   = false;
         u64  m_memtrace_tick = 0;

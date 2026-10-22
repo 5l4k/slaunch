@@ -139,7 +139,7 @@ nxlink: sinstaller
 
 clean:
 	@$(MAKE) -C projects/sSystem    clean
-	@$(MAKE) -C projects/sMenu      clean
+	@$(MAKE) -C projects/sMenu      clean VULKAN=$(VULKAN)
 	@$(MAKE) -C projects/sInstaller clean
 	@$(MAKE) -C projects/hbloader   clean
 	@rm -rf SdOut/

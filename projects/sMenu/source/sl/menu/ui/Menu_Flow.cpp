@@ -859,7 +859,7 @@ namespace sl::menu::ui {
         m_flow_items.clear();
         for (int i = 0; i < (int)m_items.size(); i++) {
             const ItemKind k = m_items[i].kind;
-            if (k == ItemKind::Game || k == ItemKind::Homebrew)
+            if (k == ItemKind::Game || k == ItemKind::Homebrew || k == ItemKind::Collection)
                 m_flow_items.push_back(i);
         }
     }
@@ -1293,10 +1293,7 @@ namespace sl::menu::ui {
             // No cover yet: fall back to the title's own icon, centred on the
             // case rather than stretched across it - a 1:1 icon pulled onto a 2:3
             // front is what made this look like rotated tiles before.
-            SDL_Texture *icon = cover ? nullptr
-                              : ((it.kind == ItemKind::Homebrew)
-                                     ? m_hb_icons.Get(it.hb_icon)
-                                     : m_icons.Get(it.app_id));
+            SDL_Texture *icon = cover ? nullptr : ItemArt(it);
 
             const float prox = std::max(0.0f, 1.0f - std::abs(p));
             const Uint8 lit  = (Uint8)(150 + 105 * prox);

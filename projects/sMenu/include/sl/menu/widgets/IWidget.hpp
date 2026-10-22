@@ -455,7 +455,7 @@ namespace sl::menu::widgets {
             // (Re)allocate the offscreen texture (screen-tall so no widget clips).
             if (ren && (!m_cacheTex || m_cacheW != w)) {
                 if (m_cacheTex) SDL_DestroyTexture(m_cacheTex);
-                m_cacheTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
+                m_cacheTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,
                                                SDL_TEXTUREACCESS_TARGET, w, gfx::Gfx::Height);
                 if (m_cacheTex) SDL_SetTextureBlendMode(m_cacheTex, SDL_BLENDMODE_BLEND);
                 m_cacheW = w;

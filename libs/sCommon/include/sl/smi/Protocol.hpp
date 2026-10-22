@@ -52,6 +52,10 @@ namespace sl::smi {
         GameCardRemoved,
         ApplicationListChanged,
         SleepFinished,
+        // Appended, so an older menu ignores it. The console is about to
+        // sleep: stop presenting until SleepFinished (vi/nvservices go down
+        // under a menu that keeps drawing, issue #13).
+        SleepRequested,
     };
 
     struct CommandHeader {

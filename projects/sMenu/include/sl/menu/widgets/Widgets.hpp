@@ -76,6 +76,7 @@ namespace sl::menu::widgets {
         // rebuilds its entry list.
         std::vector<char> m_tiled;
         void LoadEnabled();
+        void FitOnScreen();     // move enabled widgets that can't be seen into free slots
         void SaveEnabled();
 
         Thread m_thread = {};

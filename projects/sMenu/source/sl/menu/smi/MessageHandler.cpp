@@ -29,6 +29,9 @@ namespace sl::menu::smi {
                 case MenuMessage::SleepFinished:
                     if (cbs.on_sleep_finished) cbs.on_sleep_finished();
                     break;
+                case MenuMessage::SleepRequested:
+                    if (cbs.on_sleep_requested) cbs.on_sleep_requested();
+                    break;
                 case MenuMessage::ApplicationListChanged:
                     if (cbs.on_app_list_changed) cbs.on_app_list_changed();
                     break;

@@ -24,6 +24,7 @@ namespace sl::menu::widgets {
         LoadWidgets();          // constructs LuaWidgets (runs each script) on this thread
         LoadPositions();        // default layout, then any saved positions
         LoadEnabled();          // menu-owned on/off state (default off)
+        FitOnScreen();
         m_run = true;
         if (R_SUCCEEDED(threadCreate(&m_thread, &Widgets::ThreadTrampoline, this,
                                      nullptr, 0x8000, 0x3B, -2))) {
@@ -154,6 +155,40 @@ namespace sl::menu::widgets {
         if (i < 0 || i >= (int)m_enabled.size()) return;
         m_enabled[i] = on ? 1 : 0;
         SaveEnabled();
+        if (on) FitOnScreen();
+    }
+
+    // The first-run layout stacks every installed widget down one column,
+    // enabled or not, so from the fifth one on the default spot is below the
+    // screen - and a saved spot is only clamped to the bottom 40px, under the
+    // button hints. Either way the widget was on but invisible. Any enabled
+    // widget without a real view moves to the first free slot, scanning the
+    // right-hand column bottom to top and then columns further left.
+    void Widgets::FitOnScreen() {
+        constexpr int kTop = 96, kPitch = 190, kGuessH = 170, kLowest = 160;
+        const int W = gfx::Gfx::Width, H = gfx::Gfx::Height;
+        auto overlaps = [&](int skip, int x, int y) {
+            for (size_t j = 0; j < m_box.size(); j++) {
+                if ((int)j == skip || j >= m_enabled.size() || !m_enabled[j]) continue;
+                const Box &o = m_box[j];
+                const int oh = o.h > 0 ? o.h : kGuessH;
+                if (x < o.x + o.w && o.x < x + kWidgetW && y < o.y + oh && o.y < y + kGuessH)
+                    return true;
+            }
+            return false;
+        };
+        bool moved = false;
+        for (size_t i = 0; i < m_box.size() && i < m_enabled.size(); i++) {
+            if (!m_enabled[i] || m_box[i].y <= H - kLowest) continue;
+            for (int c = 0, done = 0; !done && W - (kWidgetW + 28) * (c + 1) >= 0; c++) {
+                const int x = W - kWidgetW - 28 - c * (kWidgetW + 28);
+                // Bottom up: the top of the screen is where most layouts put
+                // their main row (the Shelf's covers, XMB's bar).
+                for (int y = H - kGuessH - 50; y >= kTop; y -= kPitch)
+                    if (!overlaps((int)i, x, y)) { m_box[i].x = x; m_box[i].y = y; done = 1; moved = true; break; }
+            }
+        }
+        if (moved) SavePositions();
     }
 
     void Widgets::LoadEnabled() {

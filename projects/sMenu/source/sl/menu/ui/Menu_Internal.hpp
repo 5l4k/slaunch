@@ -28,11 +28,11 @@ namespace sl::menu::ui {
     enum { TH_Themes = 0, TH_UiMode, TH_TextPos, TH_ListIcons,
            TH_IconPack, TH_Antialias, TH_ShelfStyle, TH_ShelfVert, TH_Backdrop, TH_TileCols, TH_TileRows,
            TH_TdbRegion, TH_Sgdb, TH_SgdbKey, TH_FlowSet, TH_Wrap,
-           TH_Hints, TH_Counter, TH_RetroArch, TH_Shortcuts, TH_Collections, TH_Fonts,
+           TH_Hints, TH_Counter, TH_RetroArch, TH_Shortcuts, TH_Collections, TH_ShowHidden, TH_Fonts,
            TH_Language, TH_Music,
            TH_Widgets, TH_Entries,
-           TH_Sleep, TH_SleepTv, TH_AskUser,
-           TH_Welcome, TH_Updates, TH_Online,
+           TH_Sleep, TH_SleepTv, TH_AskUser, TH_AutoUser,
+           TH_Welcome, TH_Updates, TH_Online, TH_Usb,
            TH_About, TH_Back, TH_Count };
 
     enum { EF_Background = 0, EF_Wallpaper, EF_WallpaperDim, EF_WallpaperBlur,
@@ -516,7 +516,7 @@ namespace sl::menu::ui {
                        OptTileSize, OptTileColor, OptTileReset,
                        OptAddWidget, OptAddWidgetMenu, OptSubBack,
                        OptRemoveWidget, OptCollMenu, OptCollToggle,
-                       OptCollNew, OptCollRename, OptCollDelete }; 
+                       OptCollNew, OptCollRename, OptCollDelete, OptHide }; 
 
     // ---- anonymous online count (opt-out) ----------------------------------
     inline constexpr const char *kPingUrl    = "https://hellmachine.tail10512b.ts.net/ping";
@@ -677,6 +677,17 @@ namespace sl::menu::ui {
         struct LogLine { bool head; const char *text; };
         // Newest first. Headers are version tags; the rest are one-line summaries.
         inline const LogLine kChangelog[] = {
+            { true,  "v1.5.6" },
+            { false, "Folders: X on a game > Collections files it in a folder, and each folder shows its first four games in every layout" },
+            { false, "Hide games you never play (X > Hide); Theming > Show hidden games brings them back" },
+            { false, "The menu recovers from a crash on its own instead of stopping the console with an error, with widgets and anti-aliasing off until it runs cleanly" },
+            { false, "The menu stops drawing while the console sleeps, which should fix freezes after waking up" },
+            { false, "Closing a game waits for it to really exit, so the next game always starts" },
+            { false, "Uses less memory on big libraries, especially in Deck" },
+            { false, "OpenGL build: fixed white icons in Grid, Line, Cover and Flow" },
+            { false, "Theming > USB file transfer can switch file transfer off" },
+            { false, "Theming > Start as user boots straight into an account" },
+            { false, "Sharper text with anti-aliasing on" },
             { true,  "v1.5.5" },
             { false, "Search in every layout: press Y and type a name" },
             { false, "Collections: sort your games into folders (turn on in Theming > Collections)" },
@@ -1764,6 +1775,57 @@ void main() {
             gfx->FxStrip(2);
             gfx->FxEnd();
         }
+
+        // Layout explosion fireball (Menu_Boom.cpp), drawn like the Ocean: flat
+        // bands in chunky pixels. A ragged ball that swells fast and burns out
+        // from white through yellow and orange to dark red, plus a shock ring
+        // racing outward. uBoom: centre x, centre y, seconds since the blast,
+        // pixel size.
+        inline constexpr const char *kBoomVs = R"(
+varying vec2 vP;
+void main() {
+    vP = aV.xy * vec2(1280.0, 720.0);
+    gl_Position = Clip(vP);
+}
+)";
+        inline constexpr const char *kBoomFs = R"(
+uniform vec4 uBoom;
+varying vec2 vP;
+float H2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float N(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(H2(i), H2(i + vec2(1.0, 0.0)), f.x),
+               mix(H2(i + vec2(0.0, 1.0)), H2(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+void main() {
+    float px = uBoom.w;
+    vec2  p  = floor(vP / px) * px + px * 0.5;           // chunky pixels
+    vec2  d  = p - uBoom.xy;
+    float r  = length(d);
+    float t  = uBoom.z;
+    float an = atan(d.y, d.x);
+
+    float R    = 50.0 + 300.0 * (1.0 - exp(-t * 5.0));   // swells fast, then slows
+    float n    = N(vec2(an * 3.0 + 7.0, r * 0.012 - t * 2.6)) * 0.6
+               + N(vec2(an * 8.0 + 3.0, r * 0.035 - t * 4.5)) * 0.4;
+    float heat = clamp(1.0 - r / (R * (0.65 + 0.6 * n)), 0.0, 1.0);
+    heat *= clamp(1.2 - t / 0.85, 0.0, 1.0);             // burns out
+    heat  = floor(heat * 5.0) / 5.0;                     // flat bands
+
+    vec3 col = mix(vec3(0.45, 0.04, 0.0), vec3(1.0, 0.42, 0.0), step(0.2, heat));
+    col = mix(col, vec3(1.0, 0.72, 0.1), step(0.4, heat));
+    col = mix(col, vec3(1.0, 0.93, 0.45), step(0.6, heat));
+    col = mix(col, vec3(1.0, 1.0, 0.9), step(0.8, heat));
+    float a = heat > 0.0 ? 0.9 : 0.0;
+
+    float ring = step(abs(r - t * 1400.0), 10.0 + t * 20.0) * step(t, 0.55);
+    col = mix(col, vec3(1.0, 0.6, 0.2), ring);
+    a = max(a, ring * 0.85);
+    if (a <= 0.0) discard;
+    gl_FragColor = vec4(col, a);
+}
+)";
 
     // ---- per-entry tile config ----------------------------------------------
     //

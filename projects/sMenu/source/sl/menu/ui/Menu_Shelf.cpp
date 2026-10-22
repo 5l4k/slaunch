@@ -69,13 +69,12 @@ namespace sl::menu::ui {
             if (a <= 0.01f) continue;
             const bool sel = (idx == m_cursor);
 
-            const bool game = it.kind == ItemKind::Game, hb = it.kind == ItemKind::Homebrew;
+            const bool game = it.kind == ItemKind::Game;
             SDL_Texture *cov  = (tall && game) ? FlowCover(it) : nullptr;
-            SDL_Texture *icon = game ? m_icons.Get(it.app_id)
-                              : hb   ? m_hb_icons.Get(it.hb_icon)
-                              : SystemIcon(it.kind);
+            SDL_Texture *icon = ItemArt(it);
+            const bool glyph  = !cov && !icon;
+            if (!icon) icon = SystemIcon(it.kind);
             SDL_Texture *art  = cov ? cov : icon;
-            const bool glyph  = !cov && icon && !game && !hb;
 
             const float quad[4][3] = { { x - hw, y + hh, z }, { x + hw, y + hh, z },
                                        { x + hw, y - hh, z }, { x - hw, y - hh, z } };
@@ -211,8 +210,7 @@ namespace sl::menu::ui {
             if (A == 0 || x + sz < 0) continue;
             const MenuItem &it = m_items[idx];
 
-            const bool game = it.kind == ItemKind::Game, hb = it.kind == ItemKind::Homebrew;
-            SDL_Texture *art = game ? m_icons.Get(it.app_id) : hb ? m_hb_icons.Get(it.hb_icon) : nullptr;
+            SDL_Texture *art = ItemArt(it);
             if (art) {
                 m_gfx->DrawImage(art, x, y, sz, sz, A);
             } else {

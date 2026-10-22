@@ -101,7 +101,7 @@ namespace sl::menu::gfx {
         if (surf->w == m_scale && surf->h == m_scale) {
             if (!m_pool.empty()) { tex = m_pool.back(); m_pool.pop_back(); }
             else {
-                tex = SDL_CreateTexture(m_gfx->Renderer(), SDL_PIXELFORMAT_RGBA8888,
+                tex = SDL_CreateTexture(m_gfx->Renderer(), SDL_PIXELFORMAT_RGBA32,
                                         SDL_TEXTUREACCESS_STATIC, m_scale, m_scale);
                 if (tex) SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
             }

@@ -13,6 +13,10 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include "Menu_Internal.hpp"
+#include <malloc.h>
+#ifndef SL_SIMULATOR
+extern "C" { extern char *fake_heap_start, *fake_heap_end; }   // libnx's heap bounds
+#endif
 
 namespace sl::menu::ui {
 
@@ -102,6 +106,7 @@ namespace sl::menu::ui {
 
         LoadFavourites();
         LoadCollections();
+        LoadHidden();
         LoadSort();
         LoadOrder();
         LoadTileCfg();
@@ -166,7 +171,7 @@ namespace sl::menu::ui {
     // the mixer is a separate subsystem from SDL_video.
     void Menu::DeferredTrampoline(void *self) {
         Menu *m = static_cast<Menu *>(self);
-        m->m_widgets.Init();                       // curl global init + Lua parse
+        if (!m->m_safe_mode) m->m_widgets.Init();  // curl global init + Lua parse
         m->m_news.Init();                          // whatever news the card holds
         m->m_deferred_audio = m->m_music.Init();   // mixer + decoders
         m->m_sfx.Init(m->m_deferred_audio);        // ~1.4 MB of WAV off the SD
@@ -547,6 +552,51 @@ namespace sl::menu::ui {
         // something to play, and leaving Power and Theming in every result reads
         // as the search having failed. B clears the search and brings them back.
         // Inside a collection only its members stay, in the usual order.
+        // Hidden games drop out everywhere, search and folders included, until
+        // Theming > Show hidden games.
+        if (!m_show_hidden && !m_hidden.empty())
+            m_items.erase(std::remove_if(m_items.begin(), m_items.end(),
+                [&](const MenuItem &it) {
+                    return (it.kind == ItemKind::Game || it.kind == ItemKind::Homebrew) &&
+                           m_hidden.count(ItemKey(it));
+                }), m_items.end());
+
+        // Folders: count each one's members and keep the first four for its
+        // face, then take the members off the top level - a game filed in a
+        // folder lives in the folder. A search still finds them.
+        for (auto f = m_folder_art.begin(); f != m_folder_art.end(); ) {
+            if (!m_collections || CollIndex(f->first) < 0) {
+                if (f->second.tex) m_gfx->FreeImage(f->second.tex);
+                f = m_folder_art.erase(f);
+            } else {
+                f->second.peek.clear(); f->second.count = 0; ++f;
+            }
+        }
+        m_tucked.clear();
+        if (m_collections && !m_colls.empty()) {
+            std::unordered_map<std::string, std::vector<int>> in;
+            for (int c = 0; c < (int)m_colls.size(); c++)
+                for (const auto &k : m_colls[c].keys) in[k].push_back(c);
+            for (const auto &it : m_items) {
+                if (it.kind != ItemKind::Game && it.kind != ItemKind::Homebrew) continue;
+                auto f = in.find(ItemKey(it));
+                if (f == in.end()) continue;
+                for (int c : f->second) {
+                    FolderArt &fa = m_folder_art[m_colls[c].name];
+                    fa.count++;
+                    if (fa.peek.size() < 4) fa.peek.push_back(it);
+                }
+            }
+            if (m_coll_open.empty() && m_search.empty())
+                m_items.erase(std::remove_if(m_items.begin(), m_items.end(),
+                    [&](const MenuItem &it) {
+                        if ((it.kind != ItemKind::Game && it.kind != ItemKind::Homebrew) ||
+                            !in.count(ItemKey(it))) return false;
+                        m_tucked.push_back(it);
+                        return true;
+                    }), m_items.end());
+        }
+
         const int coll = m_collections ? CollIndex(m_coll_open) : -1;
         if (coll < 0) m_coll_open.clear();
         else {
@@ -646,6 +696,47 @@ namespace sl::menu::ui {
             MenuItem f; f.kind = ItemKind::Collection; f.name = was;
             SelectByKey(ItemKey(f));
         }
+    }
+    // hidden.txt: one ItemKey per line.
+    void Menu::LoadHidden() {
+        m_hidden.clear();
+        FILE *fp = fopen(GetUserConfigPath("hidden.txt").c_str(), "r");
+        if (!fp) return;
+        char line[FS_MAX_PATH + 8];
+        while (fgets(line, sizeof(line), fp)) {
+            line[strcspn(line, "\r\n")] = '\0';
+            if (line[0]) m_hidden.insert(line);
+        }
+        fclose(fp);
+    }
+    void Menu::SaveHidden() {
+        EnsureUserConfigDir();
+        FILE *fp = fopen(GetUserConfigPath("hidden.txt").c_str(), "w");
+        if (!fp) return;
+        for (const auto &k : m_hidden) fprintf(fp, "%s\n", k.c_str());
+        fclose(fp);
+    }
+    SDL_Texture *Menu::ItemArt(const MenuItem &it) {
+        if (it.kind == ItemKind::Game)     return m_icons.Get(it.app_id);
+        if (it.kind == ItemKind::Homebrew) return m_hb_icons.Get(it.hb_icon);
+        if (it.kind != ItemKind::Collection) return nullptr;
+        auto f = m_folder_art.find(it.name);
+        if (f == m_folder_art.end()) return nullptr;
+        FolderArt &fa = f->second;
+        // Rebuilt when another member's icon has streamed in (or the theme's
+        // plate changed), so the face fills in rather than staying half empty.
+        SDL_Texture *src[4]; int n = 0;
+        for (const auto &m : fa.peek)
+            if (SDL_Texture *s = ItemArt(m)) src[n++] = s;
+        const SDL_Color plate = IconPlate(m_theme.Current(), 255);
+        const bool same_plate = fa.plate.r == plate.r && fa.plate.g == plate.g &&
+                                fa.plate.b == plate.b;
+        if (n > 0 && (n > fa.have || !same_plate || !fa.tex)) {
+            if (fa.tex) m_gfx->FreeImage(fa.tex);
+            fa.tex = m_gfx->Mosaic(src, n, 256, plate);
+            fa.have = n; fa.plate = plate;
+        }
+        return fa.tex;
     }
     // Homebrew favourites are kept as .nro paths, one per line.
     bool Menu::IsHbFavourite(const std::string &path) const {
@@ -868,6 +959,8 @@ namespace sl::menu::ui {
                 m_check_updates = (v != 0);
             else if (sscanf(line, "online_count=%d", &v) == 1)
                 m_online_count = (v != 0);
+            else if (sscanf(line, "usb_mtp=%d", &v) == 1)
+                m_usb_mtp = (v != 0);
             else if (sscanf(line, "welcome=%d", &v) == 1)
                 m_welcome_enabled = (v != 0);
             else if (strncmp(line, "lang=", 5) == 0) {
@@ -914,6 +1007,7 @@ namespace sl::menu::ui {
         fprintf(fp, "retroarch=%d\n", m_retroarch ? 1 : 0);
         fprintf(fp, "check_updates=%d\n", m_check_updates ? 1 : 0);
         fprintf(fp, "online_count=%d\n", m_online_count ? 1 : 0);
+        fprintf(fp, "usb_mtp=%d\n", m_usb_mtp ? 1 : 0);
         fprintf(fp, "tdb_region=%d\n", m_tdb_region);
         fprintf(fp, "sgdb=%d\n", m_sgdb_enabled ? 1 : 0);
         fprintf(fp, "welcome=%d\n", m_welcome_enabled ? 1 : 0);
@@ -994,6 +1088,7 @@ namespace sl::menu::ui {
         LoadFontConfig();
         LoadFavourites();
         LoadCollections();
+        LoadHidden();
         LoadSort();
         LoadOrder();
         LoadTileCfg();
@@ -1136,6 +1231,7 @@ namespace sl::menu::ui {
     Menu::Action Menu::OnButton(Btn b, u64 &out_app_id) {
         out_app_id = 0;
         if (m_sd_removed) return Action::None;   // frozen: awaiting reboot
+        if (m_boom_state != 0) { BoomReassemble(); return Action::None; }
         return DispatchButton(b, out_app_id);
     }
 
@@ -1556,8 +1652,11 @@ namespace sl::menu::ui {
                                                             : T("Add to Favourites"), OptFav });
             m_options.push_back({ T("Remove from menu"), OptUnpinHb });
         }
-        if (m_collections && (it.kind == ItemKind::Game || it.kind == ItemKind::Homebrew))
+        if (it.kind == ItemKind::Game || it.kind == ItemKind::Homebrew) {
+            // Always offered: making the first folder turns Collections on.
             m_options.push_back({ T("Collections"), OptCollMenu });
+            m_options.push_back({ m_hidden.count(ItemKey(it)) ? T("Unhide") : T("Hide"), OptHide });
+        }
         // Any entry can be reordered.
         m_options.push_back({ T("Move"), OptMove });
 
@@ -1736,17 +1835,30 @@ namespace sl::menu::ui {
                 auto f = std::find(k.begin(), k.end(), sel_key);
                 if (f != k.end()) k.erase(f); else k.push_back(sel_key);
                 SaveCollections();
-                const int keep = m_options_cursor;
-                if (!m_coll_open.empty()) {     // may have left the open one
-                    RebuildItems();
-                    if (!m_items.empty()) SelectByKey(sel_key);
-                    if (m_items.empty() || ItemKey(m_items[m_cursor]) != sel_key) {
-                        m_options_open = false; m_options_sub = Sub_None;
-                        return Action::None;
-                    }
+                const int keep = m_options_cursor, at = m_cursor;
+                // Filing a game moves it off the top level, and unfiling one
+                // may take it out of the open folder: either way it can vanish.
+                RebuildItems();
+                if (!m_items.empty()) SelectByKey(sel_key);
+                if (m_items.empty() || ItemKey(m_items[m_cursor]) != sel_key) {
+                    if (!m_items.empty()) m_cursor = std::min(at, (int)m_items.size() - 1);
+                    m_options_open = false; m_options_sub = Sub_None;
+                    return Action::None;
                 }
                 BuildOptions();
                 m_options_cursor = keep;
+                return Action::None;
+            }
+            case OptHide: {
+                const bool was = m_hidden.erase(sel_key) != 0;
+                if (!was) m_hidden.insert(sel_key);
+                SaveHidden();
+                const int keep = m_cursor;
+                RebuildItems();
+                if (m_show_hidden) SelectByKey(sel_key);
+                else if (!m_items.empty()) m_cursor = std::min(keep, (int)m_items.size() - 1);
+                SetStatus(was ? T("Unhidden") : T("Hidden - Theming > Show hidden games"));
+                m_options_open = false;
                 return Action::None;
             }
             case OptCollNew:
@@ -2533,7 +2645,57 @@ namespace sl::menu::ui {
 
         SyncCursorFromScroll();
     }
+    // Flow and Shelf bound the art caches themselves; Deck, Cover and the rest
+    // kept a cover and hero image for every title ever scrolled past, which on
+    // a big library ran the applet out of memory (and NVK with it, issue #12).
+    // Twice a second: past kArtKeep entries, drop whatever is not within a
+    // screen or so of the cursor; under kLowHeap free, drop all but the
+    // selection. Everything dropped reloads on demand.
+    void Menu::TrimArt() {
+        static u32 tick = 0;
+        if (++tick % 30) return;
+        constexpr size_t kArtKeep = 48;
+        bool low = false;
+#ifndef SL_SIMULATOR
+        constexpr size_t kLowHeap = 40u << 20;
+        const size_t heap = (size_t)(fake_heap_end - fake_heap_start);
+        const size_t used = (size_t)(unsigned)mallinfo().uordblks;
+        low = heap > used && heap - used < kLowHeap;
+#endif
+        const size_t n = m_covers.size() + m_hero_art.size() + m_game_wraps.size() + m_shots.size();
+        if (!low && n <= kArtKeep) return;
+        // Flow and Shelf keep their own (wrapping) window; only a low heap
+        // overrides them.
+        if (!low && (m_ui_mode == UiMode::Flow || m_ui_mode == UiMode::Shelf)) return;
+
+        const int radius = low ? 0 : 12;
+        std::unordered_set<u64> keep;
+        const int total = (int)m_items.size();
+        for (int i = m_cursor - radius; total > 0 && i <= m_cursor + radius; i++)
+            keep.insert(m_items[((i % total) + total) % total].app_id);   // lists wrap
+        auto trim = [&](auto &map, auto free_one) {
+            for (auto it = map.begin(); it != map.end(); ) {
+                if (keep.count(it->first)) { ++it; continue; }
+                free_one(it->second);
+                it = map.erase(it);
+            }
+        };
+        auto free_tex = [&](SDL_Texture *t) { if (t) m_gfx->FreeImage(t); };
+        trim(m_covers, free_tex);
+        trim(m_hero_art, free_tex);
+        trim(m_game_wraps, free_tex);
+        trim(m_shots, [&](FlowShots &s) { free_tex(s.a); free_tex(s.b); });
+        if (low) {
+            DeckFreeArt();
+            for (auto &kv : m_folder_art) {
+                free_tex(kv.second.tex);
+                kv.second.tex = nullptr; kv.second.have = 0;
+            }
+        }
+    }
+
     void Menu::Render() {
+        TrimArt();
         PollHbScan();       // swap in the homebrew browser list when its worker finishes
         PollResolvePins();  // fold in pinned-homebrew names/icons when its worker finishes
         PollUpdateCheck();  // join the update-check worker when it finishes
@@ -2638,6 +2800,9 @@ namespace sl::menu::ui {
         // default system font so they can never make themselves unreadable.
         m_gfx->UseDefaultFont(m_screen == Screen::Fonts || m_screen == Screen::ColorPicker ||
                               m_screen == Screen::Keyboard);
+
+        PollBoom();
+        if (DrawBoom()) { m_gfx->Present(); return; }
 
         Phase("pre-frame");
         DrawBackground();

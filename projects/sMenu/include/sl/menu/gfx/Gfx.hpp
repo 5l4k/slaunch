@@ -86,6 +86,25 @@ namespace sl::menu::gfx {
         // Blit a texture into the dst rect (scaled to fit exactly; app icons are
         // square so this preserves them). alpha modulates the whole image.
         void         DrawImage(SDL_Texture *tex, int x, int y, int w, int h, Uint8 alpha = 255);
+        // Layout explosion. Between BeginCapture and EndCapture everything is
+        // drawn onto a clear 1280x720 page instead of the screen, and each text,
+        // image and card drawn is listed with its rect. Keep() copies a rect of
+        // the page into the atlas the flying pieces are drawn from.
+        struct Drawn { SDL_FRect r; Uint64 key; bool solid; };   // solid: image or card, not text
+        bool         BeginCapture();
+        void         EndCapture();
+        const std::vector<Drawn> &Captured() const { return m_drawn; }
+        bool         Keep(const SDL_FRect &r, SDL_FRect &atlas_src);   // false: atlas full
+        SDL_Texture *Atlas() const { return m_atlas; }
+        void         FreeCapture();
+        // `src` of the atlas drawn w x h, centred at (cx, cy), rotated.
+        void         DrawPiece(const SDL_FRect &src, float cx, float cy, float angle_deg,
+                               Uint8 alpha = 255);
+        // Same piece as a box `depth` thick, tumbled about its own x and y
+        // (rx, ry) before the in-plane turn `a` (all radians), in perspective.
+        // The edges of `src` are stretched over the sides like a case spine.
+        void         DrawPieceBox(const SDL_FRect &src, float cx, float cy, float a,
+                                  float rx, float ry, float depth, Uint8 alpha = 255);
         // Same, but recolours the texture first - for a white-glyph-on-alpha
         // icon (LoadGlyph's output) that has to take the theme's colour, the
         // same way Text() tints a cached glyph rather than shipping one PNG
@@ -228,6 +247,10 @@ namespace sl::menu::gfx {
         // full-size pixels. nullptr if render targets are unavailable.
         SDL_Texture *Blurred(SDL_Texture *src, int radius);
 
+        // A folder face: up to four textures in a 2x2 (one fills it) on a
+        // plate, size x size. Free with FreeImage. nullptr without RT support.
+        SDL_Texture *Mosaic(SDL_Texture *const *src, int n, int size, SDL_Color plate);
+
         // Additive halo around a rect. No render target: concentric rects in
         // ADD blending, which at this size reads the same as a real bloom and
         // costs `spread` fills.
@@ -258,6 +281,11 @@ namespace sl::menu::gfx {
         int      m_fx_tried = 0;          // 0 not yet, 1 ready, -1 gave up
 
         SDL_Texture *m_scene = nullptr;   // this frame, as a texture
+        SDL_Texture *m_page = nullptr, *m_atlas = nullptr, *m_cap_prev = nullptr;   // BeginCapture
+        bool         m_capturing = false;
+        std::vector<Drawn> m_drawn;
+        float        m_ax = 0, m_ay = 0, m_arow = 0;   // atlas shelf packing
+        void         Record(float x, float y, float w, float h, Uint64 key, bool solid = false);
         SDL_Texture *m_small = nullptr;   // downscale scratch for the blur
         int          m_small_div = 0;     // what m_small was built for
 
@@ -268,6 +296,11 @@ namespace sl::menu::gfx {
         bool          m_altLoaded  = false;
         bool          m_useDefault = false;
         int           m_ss         = 1;        // content scale (text raster, layout)
+        // Window pixels per layout pixel: m_ss, or 1.5 when anti-aliasing runs
+        // 720p layout in a 1080p window. Glyphs are rasterised at this scale so
+        // they land on the screen 1:1; at m_ss (2) they were shrunk to 0.75
+        // and the filtering pulled in specks of neighbouring atlas glyphs.
+        float         m_ts         = 1.0f;
         bool          m_aa         = false;    // requested before Init
         bool          m_aa_on      = false;    // the larger window was created
         // Scratch for DrawQuad3D's subdivision. A member so a face split into

@@ -24,6 +24,7 @@ namespace sl::menu::audio {
         Click,      // ordinary yes: opening a submenu, toggling a setting
         Back,       // leaving a screen
         Move,       // the cursor moved
+        Explode,    // ZL+ZR layout explosion
         Count
     };
 

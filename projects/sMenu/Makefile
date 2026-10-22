@@ -26,13 +26,14 @@ COMMON_SRC := ../../libs/sCommon/source/sl/os/Applications.cpp
 SDL3_PREFIX ?= $(HOME)/sdl3-switch/stage
 PKGCONF  := $(DEVKITPRO)/portlibs/switch/bin/aarch64-none-elf-pkg-config
 
-# VULKAN=1: draw through SDL_GPU on Vulkan, with Mesa's NVK driver
-# (github.com/etonedemid/mesa-switch) instead of OpenGL. Its SDL is the same
-# fork built with -DSDL_VULKAN=ON (SDL3_NVK_PREFIX; the satellite libraries
-# still come from SDL3_PREFIX), and Mesa 26's libraries must be found ahead
-# of devkitPro's Mesa 20. A separate build: objects in build-vk, the applet
-# in slaunch/bin/sMenu-vk - copy its main over sMenu's to run it.
-VULKAN ?= 0
+# VULKAN=1 (the default, and what ships): draw through SDL_GPU on Vulkan,
+# with Mesa's NVK driver (github.com/etonedemid/mesa-switch). Its SDL is the
+# same fork built with -DSDL_VULKAN=ON (SDL3_NVK_PREFIX; the satellite
+# libraries still come from SDL3_PREFIX), and Mesa 26's libraries must be
+# found ahead of devkitPro's Mesa 20. Objects go in build-vk, the applet in
+# slaunch/bin/sMenu-vk (the top-level Makefile copies it over sMenu's).
+# VULKAN=0 builds the older OpenGL menu instead.
+VULKAN ?= 1
 ifeq ($(VULKAN),1)
 SDL3_NVK_PREFIX ?= $(HOME)/sdl3-switch/stage-nvk
 MESA_VK         ?= $(HOME)/mesa-switch/stage-vk
@@ -80,7 +81,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 
 APP_TITLE   := sMenu
 APP_AUTHOR  := etonedemid
-APP_VERSION := 1.5.5
+APP_VERSION := 1.5.6
 
 #---------------------------------------------------------------------------------
 ARCH     := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE

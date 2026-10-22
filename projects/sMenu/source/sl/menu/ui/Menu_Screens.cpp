@@ -27,6 +27,49 @@ namespace sl::menu::ui {
         return stat(kAskUserPath, &st) == 0;
     }
 
+    // Theming > "Start as user": the daemon boots straight into this account
+    // instead of showing the player select. Two hex words; no file = Off.
+    static constexpr const char *kAutoUserPath = "sdmc:/slaunch/config/auto_user";
+    static bool ReadAutoUser(AccountUid &out) {
+        FILE *f = fopen(kAutoUserPath, "r");
+        if (!f) return false;
+        unsigned long long a = 0, b = 0;
+        const bool got = fscanf(f, "%16llx %16llx", &a, &b) == 2;
+        fclose(f);
+        out.uid[0] = a; out.uid[1] = b;
+        return got && accountUidIsValid(&out);
+    }
+    // Off -> each account on the console -> Off, `dir` steps either way.
+    static void StepAutoUser(int dir) {
+        AccountUid uids[ACC_USER_LIST_SIZE];
+        s32 n = 0;
+        if (R_FAILED(accountListAllUsers(uids, ACC_USER_LIST_SIZE, &n)) || n <= 0) return;
+        int pos = 0;                                   // 0 = Off, i + 1 = uids[i]
+        AccountUid cur;
+        if (ReadAutoUser(cur))
+            for (int i = 0; i < n; i++)
+                if (memcmp(&uids[i], &cur, sizeof(cur)) == 0) pos = i + 1;
+        pos = (pos + dir + n + 1) % (n + 1);
+        if (pos == 0) { remove(kAutoUserPath); return; }
+        mkdir("sdmc:/slaunch/config", 0777);
+        if (FILE *f = fopen(kAutoUserPath, "w")) {
+            fprintf(f, "%016llx %016llx\n", (unsigned long long)uids[pos - 1].uid[0],
+                    (unsigned long long)uids[pos - 1].uid[1]);
+            fclose(f);
+        }
+    }
+    static std::string AutoUserName() {
+        AccountUid uid;
+        if (!ReadAutoUser(uid)) return T("Off");
+        AccountProfile p;
+        AccountProfileBase base = {};
+        if (R_FAILED(accountGetProfile(&p, uid))) return T("Off");   // account gone
+        accountProfileGet(&p, nullptr, &base);
+        accountProfileClose(&p);
+        base.nickname[sizeof(base.nickname) - 1] = '\0';
+        return base.nickname[0] ? base.nickname : T("On");
+    }
+
 
     Menu::Action Menu::OnButtonKeyboard(Btn b) {
         auto commit = [&]() {
@@ -97,11 +140,12 @@ namespace sl::menu::ui {
                     }
                     if (m_kb_purpose == sl::smi::Kb_CollNew) {
                         m_colls.push_back({ name, { m_kb_key } });
+                        if (!m_collections) { m_collections = true; SaveSettings(); }
                     } else if (m_kb_app < m_colls.size()) {
                         m_colls[m_kb_app].name = name;
                     }
                     SaveCollections();
-                    const std::string keep = m_kb_purpose == sl::smi::Kb_CollNew ? m_kb_key : "c" + name;
+                    const std::string keep = "c" + name;   // the game itself is in there now
                     RebuildItems();
                     SelectByKey(keep);
                     SetStatus(m_kb_purpose == sl::smi::Kb_CollNew ? T("Collection created") : T("Renamed"));
@@ -985,6 +1029,8 @@ namespace sl::menu::ui {
         std::vector<const MenuItem *> pool;
         for (const auto &i : m_items)
             if (i.kind == ItemKind::Game) pool.push_back(&i);
+        for (const auto &i : m_tucked)   // filed in folders, still fair game
+            if (i.kind == ItemKind::Game) pool.push_back(&i);
         if (pool.empty()) return 0;
         const int n = (int)pool.size();
 
@@ -1224,9 +1270,23 @@ namespace sl::menu::ui {
             if (m_collections && m_colls.empty())
                 SetStatus(T("X on a game: Collections > New collection"));
         }
+        if (m_theming_cursor == TH_ShowHidden && (b == Btn::Left || b == Btn::Right || b == Btn::A)) {
+            m_show_hidden = !m_show_hidden;
+            RebuildItems();
+            if (m_show_hidden && m_hidden.empty()) SetStatus(T("X on a game: Hide"));
+        }
         auto toggleUpdates = [&]() { m_check_updates = !m_check_updates; SaveSettings(); };
         if (m_theming_cursor == TH_Updates && (b == Btn::Left || b == Btn::Right))
             toggleUpdates();
+        // Takes effect at once: the server starts and stops on its own thread.
+        // Off leaves USB free for homebrew that wants it, and stops the drive
+        // showing up on every computer the console is charged from.
+        if (m_theming_cursor == TH_Usb && (b == Btn::Left || b == Btn::Right || b == Btn::A)) {
+            m_usb_mtp = !m_usb_mtp;
+            if (m_usb_mtp) usb::MtpStart(); else usb::MtpStop();
+            SaveSettings();
+            SetStatus(m_usb_mtp ? T("USB file transfer on") : T("USB file transfer off"));
+        }
         if (m_theming_cursor == TH_Online && (b == Btn::Left || b == Btn::Right || b == Btn::A)) {
             m_online_count = !m_online_count;
             SaveSettings();
@@ -1285,6 +1345,8 @@ namespace sl::menu::ui {
             if (AskUserEnabled()) remove(kAskUserPath);
             else if (FILE *f = fopen(kAskUserPath, "w")) fclose(f);
         }
+        if (m_theming_cursor == TH_AutoUser && (b == Btn::Left || b == Btn::Right || b == Btn::A))
+            StepAutoUser(b == Btn::Left ? -1 : +1);
         if ((m_theming_cursor == TH_Sleep || m_theming_cursor == TH_SleepTv) &&
             (b == Btn::Left || b == Btn::Right || b == Btn::A))
             StepSleepPlan(m_theming_cursor == TH_SleepTv, b == Btn::Left ? -1 : +1);
@@ -2174,11 +2236,11 @@ namespace sl::menu::ui {
             T("Box art region"), T("SteamGridDB"), T("SteamGridDB key"), T("Flow layout"),
             T("Wrap around"), T("Button hints"), T("Position counter"),
             T("RetroArch games"), T("Shortcuts everywhere"), T("Collections"),
-            T("Fonts"), T("Language"),
+            T("Show hidden games"), T("Fonts"), T("Language"),
             T("Music"), T("Widgets"),
             T("Menu entries"),
-            T("Screen timeout"), T("Screen timeout (TV)"), T("Ask who's playing"),
-            T("Welcome screen"), T("Check for updates"), T("Online count"),
+            T("Screen timeout"), T("Screen timeout (TV)"), T("Ask who's playing"), T("Start as user"),
+            T("Welcome screen"), T("Check for updates"), T("Online count"), T("USB file transfer"),
             T("About"), T("Back")
         };
         std::vector<std::string> values(labels.size());
@@ -2206,6 +2268,7 @@ namespace sl::menu::ui {
         values[TH_Counter]     = m_show_counter ? T("On") : T("Off");
         values[TH_Shortcuts]   = m_shortcuts_everywhere ? T("On") : T("Off");
         values[TH_Collections] = m_collections ? T("On") : T("Off");
+        values[TH_ShowHidden]  = m_show_hidden ? T("On") : T("Off");
         values[TH_RetroArch]   = m_retroarch ? T("On") : T("Off");
         values[TH_TdbRegion]   = kTdbRegions[std::clamp(m_tdb_region, 0, kTdbRegionCount - 1)];
         values[TH_Sgdb]        = m_sgdb_enabled ? T("On") : T("Off");
@@ -2216,9 +2279,11 @@ namespace sl::menu::ui {
         values[TH_Sleep]       = SleepPlanText(false);
         values[TH_SleepTv]     = SleepPlanText(true);
         values[TH_AskUser]     = AskUserEnabled() ? T("On") : T("Off");
+        values[TH_AutoUser]    = AutoUserName();
         values[TH_Welcome]     = m_welcome_enabled ? T("On") : T("Off");
         values[TH_Updates]     = m_check_updates ? T("On") : T("Off");
         values[TH_Online]      = m_online_count ? T("On") : T("Off");
+        values[TH_Usb]         = m_usb_mtp ? T("On") : T("Off");
         values[TH_About]       = m_upd_available ? T("Update available") : std::string("v") + SL_VERSION;
         {
             char c[32];

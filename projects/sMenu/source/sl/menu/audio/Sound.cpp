@@ -25,6 +25,7 @@ namespace sl::menu::audio {
             { "sdmc:/slaunch/sounds/click.wav",      "sdmc:/slaunch/sounds/click.mp3",      nullptr },
             { "sdmc:/slaunch/sounds/back.wav",       "sdmc:/slaunch/sounds/back.mp3",       nullptr },
             { "sdmc:/slaunch/sounds/move.wav",       "sdmc:/slaunch/sounds/move.mp3",       nullptr },
+            { "sdmc:/slaunch/sounds/explode.wav",    "sdmc:/slaunch/sounds/explode.mp3",    nullptr },
         };
     }
 

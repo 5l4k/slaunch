@@ -73,10 +73,9 @@ namespace sl::menu::ui {
             // app icon; system entries use their black/white icon.
             if (m_list_icons && m_align == TextAlign::Left) {
                 const bool game = (it.kind == ItemKind::Game);
-                const bool art  = game || it.kind == ItemKind::Homebrew;
-                SDL_Texture *ic = game ? m_icons.Get(it.app_id)
-                                 : it.kind == ItemKind::Homebrew ? m_hb_icons.Get(it.hb_icon)
-                                 : SystemIcon(it.kind);
+                SDL_Texture *ic = ItemArt(it);
+                const bool art  = ic != nullptr;
+                if (!ic) ic = SystemIcon(it.kind);
                 if (ic) {
                     const int isz = std::min(lh, 44);
                     const Uint8 ia = game ? alpha : (Uint8)(alpha * 195 / 255);
@@ -138,12 +137,9 @@ namespace sl::menu::ui {
                            bool selected, Uint8 alpha, bool reflect) {
         const Theme &t = m_theme.Current();
 
-        const bool isGame = (it.kind == ItemKind::Game);
-        const bool isHb   = (it.kind == ItemKind::Homebrew);
-        SDL_Texture *icon = isGame ? m_icons.Get(it.app_id)
-                          : isHb   ? m_hb_icons.Get(it.hb_icon)
-                          : SystemIcon(it.kind);
-        const bool art = icon && (isGame || isHb);
+        SDL_Texture *icon = ItemArt(it);   // a folder's mosaic counts as art
+        const bool art = icon != nullptr;
+        if (!icon) icon = SystemIcon(it.kind);
 
         gfx::Gfx::CardStyle cs;
         cs.radius   = std::max(6.0f, size / 9.0f);

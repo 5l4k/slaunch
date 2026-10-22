@@ -13,6 +13,7 @@ namespace sl::menu::smi {
         void (*on_app_list_changed)()     = nullptr;
         void (*on_gamecard_inserted)()    = nullptr;
         void (*on_gamecard_removed)()     = nullptr;
+        void (*on_sleep_requested)()      = nullptr;
     };
 
     // Check the general channel for pending MenuMessage storages and dispatch.

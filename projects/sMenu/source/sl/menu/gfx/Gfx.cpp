@@ -87,6 +87,7 @@ namespace sl::menu::gfx {
             m_window = SDL_CreateWindow(m_title, Width, Height, kWindowFlags);
         }
         if (!m_window) { GfxLog("SDL_CreateWindow"); fatalThrow(MAKERESULT(360, 32)); }
+        m_ts = m_aa_on ? (float)win_w / (float)Width : (float)m_ss;
 
         // GL, by name: the GPU effects below talk to its context directly.
         // GLES2 on the console (the path SDL2 always took there), desktop GL
@@ -137,7 +138,7 @@ namespace sl::menu::gfx {
         for (int i = 0; i < (int)FontSize::Count; i++) {
             // Fresh RWops per open; the font memory is owned by pl and stays valid.
             SDL_IOStream *rw = SDL_IOFromConstMem(font.address, font.size);
-            m_sysFonts[i] = TTF_OpenFontIO(rw, true /*closeio*/, (float)(kPtSize[i] * m_ss));
+            m_sysFonts[i] = TTF_OpenFontIO(rw, true /*closeio*/, kPtSize[i] * m_ts);
             if (!m_sysFonts[i]) fatalThrow(MAKERESULT(360, 36)); // TTF_OpenFont
             // Light hinting + kerning: the shared font's default (normal)
             // hinting spaces glyphs out oddly at small UI sizes.
@@ -185,7 +186,7 @@ namespace sl::menu::gfx {
         // Probed at the smallest size because that is the one every layout
         // draws (clock, battery, hints), so the validating open is not an extra
         // one - it is the first of the sizes that were going to be opened.
-        TTF_Font *probe = TTF_OpenFont(path, (float)(kPtSize[(int)FontSize::Small] * m_ss));
+        TTF_Font *probe = TTF_OpenFont(path, kPtSize[(int)FontSize::Small] * m_ts);
         if (!probe) return false;      // keep the previously active font
 
         FreeAltFonts();
@@ -199,7 +200,7 @@ namespace sl::menu::gfx {
         if (m_useDefault || !m_altLoaded) return m_sysFonts[(int)s];
         const int i = (int)s;
         if (!m_altFonts[i] && !m_altPath.empty()) {
-            m_altFonts[i] = TTF_OpenFont(m_altPath.c_str(), (float)(kPtSize[i] * m_ss));
+            m_altFonts[i] = TTF_OpenFont(m_altPath.c_str(), kPtSize[i] * m_ts);
             // A size that will not open falls back to the system font for that
             // size only, rather than losing the chosen font everywhere.
             if (!m_altFonts[i]) return m_sysFonts[i];
@@ -216,6 +217,7 @@ namespace sl::menu::gfx {
         if (m_gradTex) SDL_DestroyTexture(m_gradTex);
         if (m_whiteTex) { SDL_DestroyTexture(m_whiteTex); m_whiteTex = nullptr; }
         if (m_scene) { SDL_DestroyTexture(m_scene); m_scene = nullptr; }
+        FreeCapture();
         if (m_small) { SDL_DestroyTexture(m_small); m_small = nullptr; }
         FreeAltFonts();
         ReapTextures();   // closes the fonts FreeAltFonts retired
@@ -302,7 +304,7 @@ namespace sl::menu::gfx {
             int ow = 0, oh = 0;
             SDL_GetRenderOutputSize(m_renderer, &ow, &oh);
             if (ow <= 0 || oh <= 0) return;
-            m_scene = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+            m_scene = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA32,
                                         SDL_TEXTUREACCESS_TARGET, ow, oh);
             if (!m_scene) return;             // no RT support: draw straight out
             SDL_SetTextureBlendMode(m_scene, SDL_BLENDMODE_NONE);
@@ -349,7 +351,7 @@ namespace sl::menu::gfx {
             m_small = nullptr;
         }
         if (!m_small) {
-            m_small = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+            m_small = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA32,
                                         SDL_TEXTUREACCESS_TARGET, sw, sh);
             if (!m_small) return;
             SDL_SetTextureBlendMode(m_small, SDL_BLENDMODE_BLEND);
@@ -492,22 +494,28 @@ namespace sl::menu::gfx {
         int w = 0, h = 0;
         if (!TTF_GetStringSize(font, text, 0, &w, &h)) return 0;
         if (m_widthCache.size() >= 4096) m_widthCache.clear();
-        m_widthCache.emplace(std::move(key), w / m_ss);
-        return w / m_ss;
+        const int lw = (int)(w / m_ts + 0.5f);
+        m_widthCache.emplace(std::move(key), lw);
+        return lw;
     }
 
-    int Gfx::LineHeight(FontSize s) { return TTF_GetFontHeight(Font(s)) / m_ss; }
+    int Gfx::LineHeight(FontSize s) { return (int)(TTF_GetFontHeight(Font(s)) / m_ts + 0.5f); }
 
     void Gfx::Text(FontSize s, int x, int y, SDL_Color c, const char *text) {
         FxClose();   // an open GPU pass must end before SDL draws again
         if (c.a == 0) return;   // see FillRect: 0 means invisible
         TTF_Text *t = GetText(s, text);
         if (!t) return;
+        if (m_capturing) {
+            u64 h = 1469598103934665603ull;               // FNV-1a of the string
+            for (const char *p = text; *p; p++) h = (h ^ (u8)*p) * 1099511628211ull;
+            Record((float)x, (float)y, (float)TextWidth(s, text), (float)LineHeight(s), h);
+        }
         TTF_SetTextColor(t, c.r, c.g, c.b, c.a);
         // The glyphs are m_ss times the layout size. Drawing at 1/m_ss scale
         // from m_ss times the position puts them on the target's own pixels
         // one for one - the logical-size mapping scales straight back up.
-        if (m_ss == 1) { TTF_DrawRendererText(t, (float)x, (float)y); return; }
+        if (m_ts == 1.0f) { TTF_DrawRendererText(t, (float)x, (float)y); return; }
         float sx = 1.0f, sy = 1.0f;
         SDL_GetRenderScale(m_renderer, &sx, &sy);
         // The clip rect is in scaled units too, so it has to grow with the
@@ -515,12 +523,14 @@ namespace sl::menu::gfx {
         SDL_Rect clip {};
         const bool clipped = SDL_RenderClipEnabled(m_renderer) &&
                              SDL_GetRenderClipRect(m_renderer, &clip);
-        SDL_SetRenderScale(m_renderer, sx / m_ss, sy / m_ss);
+        SDL_SetRenderScale(m_renderer, sx / m_ts, sy / m_ts);
         if (clipped) {
-            const SDL_Rect big { clip.x * m_ss, clip.y * m_ss, clip.w * m_ss, clip.h * m_ss };
+            const SDL_Rect big { (int)SDL_floorf(clip.x * m_ts), (int)SDL_floorf(clip.y * m_ts),
+                                 (int)SDL_ceilf(clip.w * m_ts), (int)SDL_ceilf(clip.h * m_ts) };
             SDL_SetRenderClipRect(m_renderer, &big);
         }
-        TTF_DrawRendererText(t, (float)(x * m_ss), (float)(y * m_ss));
+        // Whole window pixels: a fractional origin would filter every glyph.
+        TTF_DrawRendererText(t, SDL_roundf(x * m_ts), SDL_roundf(y * m_ts));
         SDL_SetRenderScale(m_renderer, sx, sy);
         if (clipped) SDL_SetRenderClipRect(m_renderer, &clip);
     }
@@ -554,6 +564,16 @@ namespace sl::menu::gfx {
     void Gfx::DrawQuad3D(SDL_Texture *tex, const float c[4][3],
                          SDL_Color tint, Uint8 alpha_top, Uint8 alpha_bottom,
                          bool flip_v, int strips, const float uv[4]) {
+        if (m_capturing && tex && !flip_v) {   // covers, not their reflections
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (int i = 0; i < 4; i++) {
+                float sx, sy;
+                Project3D(c[i], sx, sy);
+                x0 = SDL_min(x0, sx); y0 = SDL_min(y0, sy);
+                x1 = SDL_max(x1, sx); y1 = SDL_max(y1, sy);
+            }
+            Record(x0, y0, x1 - x0, y1 - y0, (Uint64)(uintptr_t)tex, true);
+        }
         if (Quad3DGpu(tex, c, tint, alpha_top, alpha_bottom, flip_v, uv)) return;
         FxClose();   // CPU path below goes through SDL
         // A null texture means "flat colour". SDL_RenderGeometry is documented
@@ -704,15 +724,15 @@ namespace sl::menu::gfx {
         return ScaleSurface(IMG_Load(path), w, h);
     }
 
-    // RGBA8888 at w x h. Falls back to the unscaled source when the target
+    // RGBA32 at w x h. Falls back to the unscaled source when the target
     // surface cannot be allocated - the full-size image still beats nothing.
     SDL_Surface *Gfx::ScaleSurface(SDL_Surface *raw, int w, int h) {
         if (!raw) return nullptr;
-        SDL_Surface *src = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_RGBA8888);
+        SDL_Surface *src = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_RGBA32);
         SDL_DestroySurface(raw);
         if (!src || (src->w == w && src->h == h)) return src;
 
-        SDL_Surface *dst = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA8888);
+        SDL_Surface *dst = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
         if (!dst) return src;
         // Linear, where SDL2's BlitScaled could only point-sample.
         SDL_BlitSurfaceScaled(src, nullptr, dst, nullptr, SDL_SCALEMODE_LINEAR);
@@ -732,7 +752,7 @@ namespace sl::menu::gfx {
         SDL_Surface *raw = IMG_Load(path);
         if (!raw) return nullptr;
 
-        SDL_Surface *src = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_RGBA8888);
+        SDL_Surface *src = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_RGBA32);
         SDL_DestroySurface(raw);
         if (!src) return nullptr;
 
@@ -756,7 +776,7 @@ namespace sl::menu::gfx {
         const int cy = (int)((float)(src->h - ch) * biasY);
         SDL_Rect crop { cx, cy, cw, ch };
 
-        SDL_Surface *dst = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA8888);
+        SDL_Surface *dst = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
         if (!dst) {   // out of memory: the uncropped source still beats nothing
             SDL_Texture *tex = SDL_CreateTextureFromSurface(m_renderer, src);
             SDL_DestroySurface(src);
@@ -1459,7 +1479,7 @@ namespace sl::menu::gfx {
 
         std::vector<SDL_Texture *> chain{ src };
         for (int i = 1; i <= levels; i++) {
-            SDL_Texture *t = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+            SDL_Texture *t = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA32,
                                                SDL_TEXTUREACCESS_TARGET,
                                                std::max(1, w >> i), std::max(1, h >> i));
             if (!t) break;
@@ -1480,6 +1500,39 @@ namespace sl::menu::gfx {
         if (chain.size() < 2) return nullptr;
         SDL_SetTextureBlendMode(chain[1], SDL_BLENDMODE_BLEND);
         return chain[1];
+    }
+
+    SDL_Texture *Gfx::Mosaic(SDL_Texture *const *src, int n, int size, SDL_Color plate) {
+        FxClose();
+        SDL_Texture *t = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA32,
+                                           SDL_TEXTUREACCESS_TARGET, size, size);
+        if (!t) return nullptr;
+        SDL_Texture *prev = SDL_GetRenderTarget(m_renderer);
+        SDL_SetRenderTarget(m_renderer, t);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(m_renderer, plate.r, plate.g, plate.b, 255);
+        SDL_RenderClear(m_renderer);
+        const float pad = size * 0.07f, gap = size * 0.035f;
+        const float cell = (size - 2 * pad - gap) / 2;
+        if (n == 1) {
+            const SDL_FRect d{ pad, pad, size - 2 * pad, size - 2 * pad };
+            SDL_RenderTexture(m_renderer, src[0], nullptr, &d);
+        } else {
+            // Empty cells stay as darker wells, so a two-game folder still
+            // reads as a folder with room in it rather than a broken tile.
+            SDL_SetRenderDrawColor(m_renderer, plate.r * 3 / 4, plate.g * 3 / 4,
+                                   plate.b * 3 / 4, 255);
+            for (int i = 0; i < 4; i++) {
+                const SDL_FRect d{ pad + (i % 2) * (cell + gap), pad + (i / 2) * (cell + gap),
+                                   cell, cell };
+                if (i < n && src[i]) SDL_RenderTexture(m_renderer, src[i], nullptr, &d);
+                else                 SDL_RenderFillRect(m_renderer, &d);
+            }
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderTarget(m_renderer, prev);
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+        return t;
     }
 
     // ---- GPU cards ---------------------------------------------------------------
@@ -1568,6 +1621,7 @@ void main() {
         if (g_card_prog == -2) g_card_prog = FxProgram(kCardVs, kCardFs);
         const int prog = g_card_prog;
         if (w <= 0.0f || h <= 0.0f || prog < 0) return false;
+        if (!st.reflect) Record(x, y, w, h, tex ? (u64)(uintptr_t)tex : (u64)(x * 7919 + y), true);
         if (tex && !m_fx_tex_ok) return false;
         if (!FxBegin(prog)) return false;
         FxTexture(tex);
@@ -1617,6 +1671,7 @@ void main() {
     bool Gfx::Card(SDL_Texture *tex, float x, float y, float w, float h,
                    const CardStyle &st, Uint8 alpha) {
         if (w <= 0.0f || h <= 0.0f || !CardsOk()) return false;
+        if (!st.reflect) Record(x, y, w, h, tex ? (u64)(uintptr_t)tex : (u64)(x * 7919 + y), true);
         FxClose();
         std::vector<float> u((size_t)g_card_src->n_uniforms * 4, 0.0f);
         auto set = [&](const char *name, float a, float b, float c, float d) {
@@ -1866,7 +1921,7 @@ void main() {
         if (w <= 0 || h <= 0) return full;
 
         // Bake the downscale once so per-frame blits stay cheap.
-        SDL_Texture *dst = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+        SDL_Texture *dst = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA32,
                                              SDL_TEXTUREACCESS_TARGET, w, h);
         if (!dst) return full;
         SDL_SetTextureBlendMode(dst, SDL_BLENDMODE_BLEND);
@@ -1893,9 +1948,141 @@ void main() {
         FxClose();   // an open GPU pass must end before SDL draws again
         if (!tex || w <= 0 || h <= 0) return;
         const SDL_FRect dst = F(x, y, w, h);
+        Record(dst.x, dst.y, dst.w, dst.h, (u64)(uintptr_t)tex, true);
         SDL_SetTextureAlphaMod(tex, alpha);
         SDL_RenderTexture(m_renderer, tex, nullptr, &dst);
         SDL_SetTextureAlphaMod(tex, 255); // don't leak the mod to other blits
+    }
+
+    // ---- layout explosion capture -----------------------------------------
+    namespace { constexpr int kAtlasW = 2048, kAtlasH = 1024; }
+
+    bool Gfx::BeginCapture() {
+        FxClose();
+        if (!m_page) {
+            m_page = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA32,
+                                       SDL_TEXTUREACCESS_TARGET, Width, Height);
+            if (!m_page) return false;
+        }
+        m_cap_prev = SDL_GetRenderTarget(m_renderer);
+        SDL_SetRenderTarget(m_renderer, m_page);    // no logical size: 1:1
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 0);
+        SDL_RenderClear(m_renderer);
+        m_drawn.clear();
+        m_capturing = true;
+        return true;
+    }
+
+    void Gfx::EndCapture() {
+        FxClose();
+        SDL_SetRenderTarget(m_renderer, m_cap_prev);
+        m_capturing = false;
+    }
+
+    void Gfx::Record(float x, float y, float w, float h, Uint64 key, bool solid) {
+        if (!m_capturing || w < 3 || h < 3) return;
+        if (w >= Width * 0.9f && h >= Height * 0.6f) return;   // backdrops, not objects
+        m_drawn.push_back({ SDL_FRect{ x, y, w, h }, key, solid });
+    }
+
+    bool Gfx::Keep(const SDL_FRect &r, SDL_FRect &out) {
+        if (!m_page) return false;
+        const float x0 = SDL_max(0.0f, SDL_floorf(r.x)), y0 = SDL_max(0.0f, SDL_floorf(r.y));
+        const float x1 = SDL_min((float)Width, SDL_ceilf(r.x + r.w));
+        const float y1 = SDL_min((float)Height, SDL_ceilf(r.y + r.h));
+        const float w = x1 - x0, h = y1 - y0;
+        if (w < 1 || h < 1) return false;
+        if (m_ax + w > kAtlasW) { m_ax = 0; m_ay += m_arow + 1; m_arow = 0; }
+        if (m_ay + h > kAtlasH) return false;
+        SDL_Texture *prev = SDL_GetRenderTarget(m_renderer);
+        if (!m_atlas) {
+            m_atlas = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA32,
+                                        SDL_TEXTUREACCESS_TARGET, kAtlasW, kAtlasH);
+            if (!m_atlas) return false;
+            // The page was drawn with ordinary blending onto clear pixels,
+            // which leaves its colour already multiplied by alpha.
+            SDL_SetTextureBlendMode(m_atlas, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+            SDL_SetRenderTarget(m_renderer, m_atlas);
+            SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 0);
+            SDL_RenderClear(m_renderer);
+        }
+        SDL_SetRenderTarget(m_renderer, m_atlas);
+        SDL_SetTextureBlendMode(m_page, SDL_BLENDMODE_NONE);    // copy alpha as is
+        const SDL_FRect src { x0, y0, w, h }, dst { m_ax, m_ay, w, h };
+        SDL_RenderTexture(m_renderer, m_page, &src, &dst);
+        SDL_SetRenderTarget(m_renderer, prev);
+        out = dst;
+        m_ax += w + 1;
+        m_arow = SDL_max(m_arow, h);
+        return true;
+    }
+
+    void Gfx::FreeCapture() {
+        // Retired, not destroyed: this frame may still have drawn from them.
+        if (m_page)  { m_textGraveyard.push_back(m_page);  m_page = nullptr; }
+        if (m_atlas) { m_textGraveyard.push_back(m_atlas); m_atlas = nullptr; }
+        m_ax = m_ay = m_arow = 0;
+        m_drawn.clear();
+    }
+
+    void Gfx::DrawPiece(const SDL_FRect &src, float cx, float cy, float angle_deg, Uint8 alpha) {
+        FxClose();
+        if (!m_atlas) return;
+        const SDL_FRect dst { cx - src.w * 0.5f, cy - src.h * 0.5f, src.w, src.h };
+        SDL_SetTextureAlphaMod(m_atlas, alpha);
+        SDL_RenderTextureRotated(m_renderer, m_atlas, &src, &dst, angle_deg, nullptr, SDL_FLIP_NONE);
+        SDL_SetTextureAlphaMod(m_atlas, 255);
+    }
+
+    void Gfx::DrawPieceBox(const SDL_FRect &src, float cx, float cy, float a,
+                           float rx, float ry, float depth, Uint8 alpha) {
+        FxClose();
+        if (!m_atlas) return;
+        // The 8 corners: x, y in the plane, z towards the back (+) and the
+        // viewer (-), turned about x, then y, then the screen normal.
+        const float hw = src.w * 0.5f, hh = src.h * 0.5f, hd = depth * 0.5f;
+        const float cxr = SDL_cosf(rx), sxr = SDL_sinf(rx), cyr = SDL_cosf(ry), syr = SDL_sinf(ry);
+        const float ca = SDL_cosf(a), sa = SDL_sinf(a);
+        constexpr float kFocal = 1400.0f;
+        SDL_FPoint p[8];
+        float z[8];
+        for (int i = 0; i < 8; i++) {
+            float x = (i & 1) ? hw : -hw, y = (i & 2) ? hh : -hh, zz = (i & 4) ? hd : -hd;
+            float y1 = y * cxr - zz * sxr, z1 = y * sxr + zz * cxr;   // about x
+            float x2 = x * cyr + z1 * syr, z2 = -x * syr + z1 * cyr;  // about y
+            const float x3 = x2 * ca - y1 * sa, y3 = x2 * sa + y1 * ca;
+            const float k = kFocal / (kFocal + z2);
+            p[i] = { cx + x3 * k, cy + y3 * k };
+            z[i] = z2;
+        }
+        (void)z;
+        const float iw = 1.0f / m_atlas->w, ih = 1.0f / m_atlas->h;
+        const float u0 = src.x * iw, v0 = src.y * ih, u1 = (src.x + src.w) * iw, v1 = (src.y + src.h) * ih;
+        const float ue = 1.5f * iw, ve = 1.5f * ih;   // an edge column / row of the texture
+        // Faces as corner indices, counter-clockwise seen from outside, with
+        // the texture rect each one shows and how dark it is.
+        struct Face { int c[4]; float uv[4]; float shade; };
+        const Face faces[6] = {
+            { { 0, 1, 3, 2 }, { u0, v0, u1, v1 }, 1.0f },                // front
+            { { 5, 4, 6, 7 }, { u1, v0, u0, v1 }, 0.45f },               // back, mirrored
+            { { 4, 0, 2, 6 }, { u0, v0, u0 + ue, v1 }, 0.6f },           // left
+            { { 1, 5, 7, 3 }, { u1 - ue, v0, u1, v1 }, 0.6f },           // right
+            { { 4, 5, 1, 0 }, { u0, v0, u1, v0 + ve }, 0.75f },          // top
+            { { 2, 3, 7, 6 }, { u0, v1 - ve, u1, v1 }, 0.5f },           // bottom
+        };
+        const float al = alpha / 255.0f;
+        for (const Face &f : faces) {
+            const SDL_FPoint &A = p[f.c[0]], &B = p[f.c[1]], &C = p[f.c[2]];
+            if ((B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x) <= 0.0f) continue;   // facing away
+            const float k = f.shade * al;   // premultiplied: dim rgb along with alpha
+            const SDL_FColor col { k, k, k, al };
+            const SDL_FPoint uv[4] = { { f.uv[0], f.uv[1] }, { f.uv[2], f.uv[1] },
+                                       { f.uv[2], f.uv[3] }, { f.uv[0], f.uv[3] } };
+            SDL_Vertex v[4];
+            for (int i = 0; i < 4; i++) v[i] = { p[f.c[i]], col, uv[i] };
+            static const int idx[6] = { 0, 1, 2, 0, 2, 3 };
+            SDL_RenderGeometry(m_renderer, m_atlas, v, 4, idx, 6);
+        }
     }
 
     void Gfx::DrawImageTinted(SDL_Texture *tex, int x, int y, int w, int h,
@@ -1903,6 +2090,7 @@ void main() {
         FxClose();
         if (!tex || w <= 0 || h <= 0) return;
         const SDL_FRect dst = F(x, y, w, h);
+        Record(dst.x, dst.y, dst.w, dst.h, (u64)(uintptr_t)tex, true);
         SDL_SetTextureColorMod(tex, c.r, c.g, c.b);
         // c's own alpha (as Text() uses it) times the caller's fade multiplier,
         // the same combination IconPlate already does for a theme colour and a
