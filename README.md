@@ -6,6 +6,14 @@
 <img width="1280" height="720" alt="2026101522331400-A082AE4E5DA891D87084ACEACFDFF4A9" src="https://github.com/user-attachments/assets/25b4fedb-23fb-4c87-9cf6-0260a3c94ac2" />
 
 
+## Support
+
+If you'd like to support development:
+
+- USDT (TRC20): `TCJ4HMJF3JHQG66khYTj98Em7v74j3cry9`
+- Bitcoin: `bc1qaeypp2m5h74alrmhyu4zvzf3yyf58k6mcw7868`
+- Monero: `45npN9u6zMFE7xMxfszfWBX2jdDdtZaogcGex4s5D7QDNsGPtbXjtjtXpbx9cnxLaKXC1KzGgckN2fMwrYrw5yqPTG2KiPj`
+
 ## Features
 
 * **Theming & Customization:** Supports 5 built-in themes, custom user wallpapers, icon packs, custom fonts, and several UI modes. Includes layout tuning and customizable tile sizes/colors.
@@ -87,11 +95,3 @@ Run `make` in the sLaunch root directory. This compiles the daemon, applet, and 
 * **MeepCat55:** Creator of the bundled `Minimal` icon pack.
 * **Xelu:** Free Controller and Key Prompts used for UI buttons (CC0).
 * **averne / FFmpeg (nvtegra branch) & SwitchWave:** NVDEC hardware-acceleration backend used for video wallpaper decoding (GPLv2+).
-
-## Support
-
-If you'd like to support development:
-
-- USDT (TRC20): `TCJ4HMJF3JHQG66khYTj98Em7v74j3cry9`
-- Bitcoin: `bc1qaeypp2m5h74alrmhyu4zvzf3yyf58k6mcw7868`
-- Monero: `45npN9u6zMFE7xMxfszfWBX2jdDdtZaogcGex4s5D7QDNsGPtbXjtjtXpbx9cnxLaKXC1KzGgckN2fMwrYrw5yqPTG2KiPj`
