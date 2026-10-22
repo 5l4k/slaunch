@@ -2191,7 +2191,7 @@ namespace sl::menu::ui {
                                 m_ui_mode != UiMode::Deck && m_ui_mode != UiMode::Shelf) continue;
             if (i == TH_SgdbKey && !m_sgdb_enabled) continue;
             if (i == TH_SgdbKey && m_ui_mode != UiMode::Flow &&
-                                   m_ui_mode != UiMode::Deck) continue;
+                                   m_ui_mode != UiMode::Deck && m_ui_mode != UiMode::Shelf) continue;
             if (i == TH_FlowSet && m_ui_mode != UiMode::Flow) continue;
             // XMB gives the shortcuts a column each whatever this says, so
             // there the row would be a switch wired to nothing.
