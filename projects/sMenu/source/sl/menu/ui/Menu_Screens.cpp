@@ -139,7 +139,9 @@ namespace sl::menu::ui {
                         break;
                     }
                     if (m_kb_purpose == sl::smi::Kb_CollNew) {
-                        m_colls.push_back({ name, { m_kb_key } });
+                        m_colls.insert(std::find_if(m_colls.begin(), m_colls.end(),
+                                       [](const Collection &c) { return c.playlist; }),
+                                       { name, { m_kb_key } });
                         if (!m_collections) { m_collections = true; SaveSettings(); }
                     } else if (m_kb_app < m_colls.size()) {
                         m_colls[m_kb_app].name = name;
@@ -1255,13 +1257,6 @@ namespace sl::menu::ui {
             m_tdb_region = (m_tdb_region + (b == Btn::Left ? kTdbRegionCount - 1 : 1)) % kTdbRegionCount;
             SaveSettings();
         }
-        auto toggleShortcuts = [&]() {
-            m_shortcuts_everywhere = !m_shortcuts_everywhere;
-            SaveSettings();
-            RebuildItems();
-        };
-        if (m_theming_cursor == TH_Shortcuts && (b == Btn::Left || b == Btn::Right))
-            toggleShortcuts();
         if (m_theming_cursor == TH_Collections && (b == Btn::Left || b == Btn::Right || b == Btn::A)) {
             m_collections = !m_collections;
             m_coll_open.clear();
@@ -1368,7 +1363,6 @@ namespace sl::menu::ui {
                 case TH_Wrap:        toggleWrap(); break;
                 case TH_Hints:       toggleHints(); break;
                 case TH_Counter:     toggleCounter(); break;
-                case TH_Shortcuts:   toggleShortcuts(); break;
                 case TH_RetroArch:   toggleRetroArch(); break;
                 case TH_FlowSet:
                     m_screen = Screen::FlowSettings;
@@ -2193,9 +2187,6 @@ namespace sl::menu::ui {
             if (i == TH_SgdbKey && m_ui_mode != UiMode::Flow &&
                                    m_ui_mode != UiMode::Deck && m_ui_mode != UiMode::Shelf) continue;
             if (i == TH_FlowSet && m_ui_mode != UiMode::Flow) continue;
-            // XMB gives the shortcuts a column each whatever this says, so
-            // there the row would be a switch wired to nothing.
-            if (i == TH_Shortcuts && (m_ui_mode == UiMode::XMB || !m_retroarch)) continue;
             if (i == TH_ShelfVert && (m_ui_mode != UiMode::Shelf || m_shelf_ps)) continue;
             if (i == TH_ShelfStyle && m_ui_mode != UiMode::Shelf) continue;
             if (i == TH_Backdrop && m_ui_mode != UiMode::Shelf && m_ui_mode != UiMode::Line &&
@@ -2235,7 +2226,7 @@ namespace sl::menu::ui {
             T("Columns"), T("Rows"),
             T("Box art region"), T("SteamGridDB"), T("SteamGridDB key"), T("Flow layout"),
             T("Wrap around"), T("Button hints"), T("Position counter"),
-            T("RetroArch games"), T("Shortcuts everywhere"), T("Collections"),
+            T("RetroArch games"), T("Collections"),
             T("Show hidden games"), T("Fonts"), T("Language"),
             T("Music"), T("Widgets"),
             T("Menu entries"),
@@ -2266,7 +2257,6 @@ namespace sl::menu::ui {
         values[TH_Wrap]        = m_wrap_nav ? T("On") : T("Off");
         values[TH_Hints]       = m_show_hints ? T("On") : T("Off");
         values[TH_Counter]     = m_show_counter ? T("On") : T("Off");
-        values[TH_Shortcuts]   = m_shortcuts_everywhere ? T("On") : T("Off");
         values[TH_Collections] = m_collections ? T("On") : T("Off");
         values[TH_ShowHidden]  = m_show_hidden ? T("On") : T("Off");
         values[TH_RetroArch]   = m_retroarch ? T("On") : T("Off");
@@ -2631,7 +2621,7 @@ namespace sl::menu::ui {
     }
     // ---- Album (screenshot browser) -----------------------------------------
     // The console files captures as
-    // sdmc:/Nintendo/Album/<year>/<month>/<day>/<timestamp>-<id>.jpg (.mp4 for
+    // sdmc:/Nintendo/Album/<year>/<month>/<day>/<timestamp>-<id>.jpg (.png, .mp4 for
     // clips, played through gfx::VideoPlayer). Walking that fixed
     // four-level shape with opendir is enough; there is no need for a general
     // recursive walker, and the depth cap means a stray directory cannot send us
@@ -2658,8 +2648,12 @@ namespace sl::menu::ui {
             std::sort(out.begin(), out.end());
         };
 
+        // PNGShot keeps its own tree beside the console's, Album/PNGs/<y>/<m>/<d>.
+        // (From the Album root PNGs passes for a year, finds no files at that
+        // depth and adds nothing.)
         std::vector<std::string> years, months, days;
         entries("sdmc:/Nintendo/Album", years, false);
+        entries("sdmc:/Nintendo/Album/PNGs", years, false);
         for (const auto &y : years) {
             months.clear();
             entries(y, months, false);
@@ -2671,16 +2665,25 @@ namespace sl::menu::ui {
                     entries(d, shots, true);
                     for (auto &s : shots) {
                         const char *ext = s.c_str() + s.size() - 4;
-                        if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".mp4") == 0)
+                        if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".png") == 0 ||
+                            strcasecmp(ext, ".mp4") == 0)
                             m_album.push_back(std::move(s));
                     }
                 }
             }
         }
-        // Newest first: the path shape sorts chronologically, so one reverse
-        // puts the most recent capture under the cursor on open, which is what
-        // you almost always want.
-        std::reverse(m_album.begin(), m_album.end());
+        // Newest first, so the most recent capture is under the cursor on open.
+        // Sorted on the file name's digits, since the two trees' paths do not
+        // interleave by date ("2026102307400000-ID.jpg", "20261023_074000.png").
+        auto stamp = [](const std::string &p) {
+            std::string d;
+            for (size_t i = p.find_last_of('/') + 1; i < p.size() && d.size() < 14; i++)
+                if (p[i] >= '0' && p[i] <= '9') d += p[i];
+                else if (p[i] != '_') break;
+            return d;
+        };
+        std::stable_sort(m_album.begin(), m_album.end(),
+            [&](const std::string &a, const std::string &b) { return stamp(a) > stamp(b); });
     }
     void Menu::FreeAlbumTexture() {
         if (m_album_tex) m_gfx->FreeImage(m_album_tex);
@@ -2857,9 +2860,11 @@ namespace sl::menu::ui {
 
     // "2026092312000000-ABCDEF.jpg" -> "2026-09-23  12:00:00". The console
     // names every capture by its timestamp, so this is the capture's date.
+    // PNGShot's "20260923_120000.png" reads the same once the '_' is gone.
     static std::string CaptureDate(const std::string &path) {
         const size_t slash = path.find_last_of('/');
-        const std::string f = (slash == std::string::npos) ? path : path.substr(slash + 1);
+        std::string f = (slash == std::string::npos) ? path : path.substr(slash + 1);
+        if (f.size() > 8 && f[8] == '_') f.erase(8, 1);
         if (f.size() < 14 || f.find_first_not_of("0123456789") < 14) return f;
         return f.substr(0, 4) + "-" + f.substr(4, 2) + "-" + f.substr(6, 2) + "  " +
                f.substr(8, 2) + ":" + f.substr(10, 2) + ":" + f.substr(12, 2);

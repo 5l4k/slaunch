@@ -411,10 +411,31 @@ namespace sl::menu::ui {
         // Favourites pinned at the very top for quick access.
         for (auto &it : favs) m_items.push_back(std::move(it));
 
+        // RetroArch playlists outside XMB: a folder each, remade from the scan
+        // every time and never saved. XMB gives each a column instead. Kept
+        // after the user's own folders so their indices never move.
+        m_colls.erase(std::remove_if(m_colls.begin(), m_colls.end(),
+                      [](const Collection &c) { return c.playlist; }), m_colls.end());
+        if (m_retroarch && m_ui_mode != UiMode::XMB) {
+            StartHbScan();
+            for (const auto &sc : m_shortcuts) {     // sorted by category already
+                if (sc.category.empty()) continue;   // stays loose on the top level
+                if (m_colls.empty() || !m_colls.back().playlist ||
+                    m_colls.back().name != sc.category)
+                    m_colls.push_back({ sc.category, {}, true });
+                m_colls.back().keys.push_back("h" + sc.argv);   // its ItemKey
+            }
+        }
+        // The setting covers the user's folders; playlist ones always show.
+        auto shown = [&](int ci) {
+            return ci >= 0 && (m_collections || m_colls[ci].playlist);
+        };
+
         // Collection folders, right under the favourites (none while inside one).
-        if (m_collections && m_coll_open.empty())
-            for (const auto &c : m_colls) {
-                MenuItem it; it.kind = ItemKind::Collection; it.name = c.name;
+        if (m_coll_open.empty())
+            for (int c = 0; c < (int)m_colls.size(); c++) {
+                if (!shown(c)) continue;
+                MenuItem it; it.kind = ItemKind::Collection; it.name = m_colls[c].name;
                 m_items.push_back(std::move(it));
             }
 
@@ -448,14 +469,14 @@ namespace sl::menu::ui {
             }
         }
 
-        // Launcher shortcuts (RetroArch playlists, shortcuts.txt). XMB always
-        // takes them - a column each is the whole reason they exist - and the
-        // other layouts only on request, since a scanned ROM library is easily
-        // larger than everything else on this list put together.
+        // Launcher shortcuts (RetroArch playlists, shortcuts.txt). XMB gives
+        // them a column each; the other layouts file them into the playlist
+        // folders above, since a ROM library is easily larger than everything
+        // else on this list put together.
         //
         // Appended in scan order, which ScanShortcuts already sorted by
         // category then name, so XmbRebuild can group them by walking once.
-        if (m_retroarch && (m_ui_mode == UiMode::XMB || m_shortcuts_everywhere)) {
+        if (m_retroarch) {
             StartHbScan();   // same worker reads both; no-op once it has landed
             for (const auto &sc : m_shortcuts) {
                 MenuItem it;
@@ -565,7 +586,7 @@ namespace sl::menu::ui {
         // face, then take the members off the top level - a game filed in a
         // folder lives in the folder. A search still finds them.
         for (auto f = m_folder_art.begin(); f != m_folder_art.end(); ) {
-            if (!m_collections || CollIndex(f->first) < 0) {
+            if (!shown(CollIndex(f->first))) {
                 if (f->second.tex) m_gfx->FreeImage(f->second.tex);
                 f = m_folder_art.erase(f);
             } else {
@@ -573,10 +594,10 @@ namespace sl::menu::ui {
             }
         }
         m_tucked.clear();
-        if (m_collections && !m_colls.empty()) {
+        if (!m_colls.empty()) {
             std::unordered_map<std::string, std::vector<int>> in;
             for (int c = 0; c < (int)m_colls.size(); c++)
-                for (const auto &k : m_colls[c].keys) in[k].push_back(c);
+                if (shown(c)) for (const auto &k : m_colls[c].keys) in[k].push_back(c);
             for (const auto &it : m_items) {
                 if (it.kind != ItemKind::Game && it.kind != ItemKind::Homebrew) continue;
                 auto f = in.find(ItemKey(it));
@@ -597,7 +618,7 @@ namespace sl::menu::ui {
                     }), m_items.end());
         }
 
-        const int coll = m_collections ? CollIndex(m_coll_open) : -1;
+        const int coll = shown(CollIndex(m_coll_open)) ? CollIndex(m_coll_open) : -1;
         if (coll < 0) m_coll_open.clear();
         else {
             const auto &keys = m_colls[coll].keys;
@@ -673,6 +694,7 @@ namespace sl::menu::ui {
         FILE *fp = fopen(GetUserConfigPath("collections.txt").c_str(), "w");
         if (!fp) return;
         for (const auto &c : m_colls) {
+            if (c.playlist) continue;
             fprintf(fp, "[%s]\n", c.name.c_str());
             for (const auto &k : c.keys) fprintf(fp, "%s\n", k.c_str());
         }
@@ -945,8 +967,6 @@ namespace sl::menu::ui {
                 m_show_hints = (v != 0);
             else if (sscanf(line, "show_counter=%d", &v) == 1)
                 m_show_counter = (v != 0);
-            else if (sscanf(line, "shortcuts_everywhere=%d", &v) == 1)
-                m_shortcuts_everywhere = (v != 0);
             else if (sscanf(line, "collections=%d", &v) == 1)
                 m_collections = (v != 0);
             else if (sscanf(line, "retroarch=%d", &v) == 1)
@@ -1002,7 +1022,6 @@ namespace sl::menu::ui {
         fprintf(fp, "wrap_nav=%d\n", m_wrap_nav ? 1 : 0);
         fprintf(fp, "show_hints=%d\n", m_show_hints ? 1 : 0);
         fprintf(fp, "show_counter=%d\n", m_show_counter ? 1 : 0);
-        fprintf(fp, "shortcuts_everywhere=%d\n", m_shortcuts_everywhere ? 1 : 0);
         fprintf(fp, "collections=%d\n", m_collections ? 1 : 0);
         fprintf(fp, "retroarch=%d\n", m_retroarch ? 1 : 0);
         fprintf(fp, "check_updates=%d\n", m_check_updates ? 1 : 0);
@@ -1312,7 +1331,13 @@ namespace sl::menu::ui {
                 m_screen = Screen::Fonts;
                 m_font_cursor = m_font_applied;
                 return Action::None;
-            case ItemKind::Album:        OpenAlbumViewer(); return Action::None;
+            case ItemKind::Album:
+                // Only the SD card's captures are listed here; with captures
+                // saved to system memory there are none, so go straight to the
+                // system album rather than an empty screen.
+                OpenAlbumViewer();
+                if (m_album.empty()) { m_screen = Screen::Main; return Action::OpenAlbum; }
+                return Action::None;
             case ItemKind::MusicPlayer:  OpenMusicPlayer(false); return Action::None;
             case ItemKind::UserPage:     return Action::OpenUserPage;
             case ItemKind::WebBrowser:   return Action::OpenWebBrowser;
@@ -1623,6 +1648,7 @@ namespace sl::menu::ui {
         if (m_options_sub == Sub_Collections) {
             const std::string key = ItemKey(m_items[m_cursor]);
             for (int i = 0; i < (int)m_colls.size(); i++) {
+                if (m_colls[i].playlist) continue;   // follows the playlist file
                 const auto &k = m_colls[i].keys;
                 const bool in = std::find(k.begin(), k.end(), key) != k.end();
                 m_options.push_back({ std::string(in ? "[x] " : "[ ] ") + m_colls[i].name,
@@ -1634,7 +1660,7 @@ namespace sl::menu::ui {
         }
 
         const MenuItem &it = m_items[m_cursor];
-        if (it.kind == ItemKind::Collection) {
+        if (it.kind == ItemKind::Collection && !m_colls[CollIndex(it.name)].playlist) {
             m_options.push_back({ T("Rename"), OptCollRename });
             m_options.push_back({ T("Delete collection"), OptCollDelete });
         }

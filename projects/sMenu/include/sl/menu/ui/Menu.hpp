@@ -1183,7 +1183,6 @@ namespace sl::menu::ui {
         // shows them - it gives them a column each, which is the whole point -
         // but a few thousand ROMs poured into the Grid or the Deck buries the
         // games they sit next to, so everywhere else is opt-in.
-        bool      m_shortcuts_everywhere = false;
         // RetroArch playlists at all (beta, opt-in behind a warning).
         bool      m_retroarch = false;
         // Active name filter, empty when not searching. Deliberately not
@@ -1193,7 +1192,8 @@ namespace sl::menu::ui {
         // Collections (opt-in): named lists of ItemKeys, per user. Shown as
         // folder entries; opening one filters the list to its members, the
         // same way a search does. Not persisted, like the search.
-        struct Collection { std::string name; std::vector<std::string> keys; };
+        // playlist: a RetroArch playlist's folder, made by RebuildItems, never saved.
+        struct Collection { std::string name; std::vector<std::string> keys; bool playlist = false; };
         bool        m_collections = false;   // setting (persisted)
         std::vector<Collection> m_colls;
         std::string m_coll_open;              // empty = not inside one

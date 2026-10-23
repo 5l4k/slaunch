@@ -28,7 +28,7 @@ namespace sl::menu::ui {
     enum { TH_Themes = 0, TH_UiMode, TH_TextPos, TH_ListIcons,
            TH_IconPack, TH_Antialias, TH_ShelfStyle, TH_ShelfVert, TH_Backdrop, TH_TileCols, TH_TileRows,
            TH_TdbRegion, TH_Sgdb, TH_SgdbKey, TH_FlowSet, TH_Wrap,
-           TH_Hints, TH_Counter, TH_RetroArch, TH_Shortcuts, TH_Collections, TH_ShowHidden, TH_Fonts,
+           TH_Hints, TH_Counter, TH_RetroArch, TH_Collections, TH_ShowHidden, TH_Fonts,
            TH_Language, TH_Music,
            TH_Widgets, TH_Entries,
            TH_Sleep, TH_SleepTv, TH_AskUser, TH_AutoUser,
@@ -677,6 +677,12 @@ namespace sl::menu::ui {
         struct LogLine { bool head; const char *text; };
         // Newest first. Headers are version tags; the rest are one-line summaries.
         inline const LogLine kChangelog[] = {
+            { true,  "v1.5.8" },
+            { false, "Sleep from the HOME button's hold menu works now" },
+            { false, "Album shows PNG screenshots, PNGShot's included" },
+            { false, "Album opens the system album straight away when the SD card has no captures" },
+            { false, "RetroArch playlists: games RetroArch left without a core show up, run with an installed core that fits" },
+            { false, "RetroArch playlists are folders in every layout, not only in XMB" },
             { true,  "v1.5.7" },
             { false, "Folders: X on a game > Collections files it in a folder, and each folder shows its first four games in every layout" },
             { false, "Hide games you never play (X > Hide); Theming > Show hidden games brings them back" },

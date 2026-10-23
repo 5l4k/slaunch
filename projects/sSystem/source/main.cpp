@@ -337,10 +337,19 @@ static void EnsureUser() {
 enum SystemAppletMessage : u32 {
     Msg_DetectShortPressingHomeButton  = 20,
     Msg_DetectShortPressingPowerButton = 22,
+    Msg_RequestToPrepareSleep          = 25,   // the HOME long-press menu's "Sleep"
     Msg_FinishedSleepSequence          = 26,
+    Msg_SleepRequiredByHighTemperature = 27,
+    Msg_SleepRequiredByLowBattery      = 28,
     Msg_AutoPowerDown                  = 29,
     Msg_SdCardRemoved                  = 33,
 };
+
+static bool IsSleepMessage(u32 msg) {
+    return msg == Msg_DetectShortPressingPowerButton || msg == Msg_AutoPowerDown ||
+           msg == Msg_RequestToPrepareSleep || msg == Msg_SleepRequiredByHighTemperature ||
+           msg == Msg_SleepRequiredByLowBattery;
+}
 
 // Theming > "Start as user": an account to boot straight into, skipping the
 // player select. Written by the menu as two hex words; absent = Off. Ignored
@@ -377,9 +386,8 @@ static bool PickUser(AccountUid &out) {
     while (!appletHolderCheckFinished(&sel)) {
         u32 msg = 0;
         while (R_SUCCEEDED(appletGetMessage(&msg))) {
-            if (msg == Msg_DetectShortPressingPowerButton || msg == Msg_AutoPowerDown) {
-                DaemonLog("power: %s during player select -> sleep",
-                          msg == Msg_AutoPowerDown ? "auto power down" : "power button");
+            if (IsSleepMessage(msg)) {
+                DaemonLog("power: msg %u during player select -> sleep", msg);
                 if (const Result rc = pwr::Sleep(); R_FAILED(rc))
                     DaemonLog("power: sleep request refused rc=0x%x", rc);
             } else if (msg == Msg_FinishedSleepSequence) {
@@ -738,9 +746,11 @@ static void PumpAppletMessages() {
             // after a refused power transition) shows whether we started it.
             case Msg_DetectShortPressingPowerButton:
             case Msg_AutoPowerDown:
-                DaemonLog("power: %s -> sleep (menu=%d app=%d)",
-                          msg == Msg_AutoPowerDown ? "auto power down" : "power button",
-                          (int)la::IsMenuAlive(), (int)app::g_AppRunning);
+            case Msg_RequestToPrepareSleep:
+            case Msg_SleepRequiredByHighTemperature:
+            case Msg_SleepRequiredByLowBattery:
+                DaemonLog("power: msg %u -> sleep (menu=%d app=%d)",
+                          msg, (int)la::IsMenuAlive(), (int)app::g_AppRunning);
                 SleepWithMenu();
                 break;
             case Msg_FinishedSleepSequence:
@@ -748,7 +758,8 @@ static void PumpAppletMessages() {
                 if (la::IsMenuAlive()) PushMenuEvent(MenuMessage::SleepFinished);
                 break;
             case Msg_SdCardRemoved:                  HandleSdCardRemoved(); break;
-            default: break;
+            // Logged so a message we should act on can be found on hardware.
+            default: DaemonLog("applet msg %u ignored", msg); break;
         }
     }
 }

@@ -91,7 +91,8 @@ namespace sl::sys::la {
             while (R_SUCCEEDED(appletGetMessage(&msg))) {
                 if (msg == 20 /*DetectShortPressingHomeButton*/) {
                     appletHolderRequestExitOrTerminate(&holder, 5'000'000'000ULL);
-                } else if (msg == 22 /*power*/ || msg == 29 /*auto power down*/) {
+                } else if (msg == 22 /*power*/ || msg == 29 /*auto power down*/ ||
+                           msg == 25 /*HOME long-press Sleep*/ || msg == 27 || msg == 28 /*heat, battery*/) {
                     appletStartSleepSequence(true);
                 } else if (msg == 33 /*SD card removed*/) {
                     // Consumed here, so the main loop never sees it: do what it
