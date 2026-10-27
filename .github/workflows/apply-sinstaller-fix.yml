@@ -32,40 +32,36 @@ jobs:
               raise SystemExit("startup romfsInit pattern not found")
           s = s.replace(old, new, 1)
 
-          old = '''        if (screen == Screen::Extracting) {
-              ok = ExtractZip("sdmc:/slaunch_update.zip");
-              remove("sdmc:/slaunch_update.zip");
-              // Same reasoning as a fresh Install: a stale disabled-aside copy
-              // would otherwise outlive the update it was disabled before.
-          '''
-          old = old.replace("              ", "            ")
-
+          old = "        if (screen == Screen::Extracting) {\n"
           new = '''        if (screen == Screen::Extracting) {
-              // The release zip contains switch/sInstaller/sInstaller.nro. When
-              // this installer is launched from that path, its embedded RomFS
-              // keeps the running NRO open and prevents ExtractZip() from
-              // replacing it. The update path no longer needs romfs:/payload or
-              // the bundled UI assets, so release the mount before extracting.
-              if (romfsMounted) {
-                  romfsExit();
-                  romfsMounted = false;
-              }
+            // The release zip contains switch/sInstaller/sInstaller.nro. When
+            // this installer is launched from that path, its embedded RomFS
+            // keeps the running NRO open and prevents ExtractZip() from
+            // replacing it. The update path no longer needs romfs:/payload or
+            // the bundled UI assets, so release the mount before extracting.
+            if (romfsMounted) {
+                romfsExit();
+                romfsMounted = false;
+            }
 
-              ok = ExtractZip("sdmc:/slaunch_update.zip");
-              remove("sdmc:/slaunch_update.zip");
-
-              // A failed update returns to the main menu, where Install/Re-install
-              // still needs romfs:/payload. Restore the mount in that case.
-              if (!ok && !romfsMounted)
-                  romfsMounted = R_SUCCEEDED(romfsInit());
-
-              // Same reasoning as a fresh Install: a stale disabled-aside copy
-              // would otherwise outlive the update it was disabled before.
-          '''
-          new = new.replace("              ", "            ")
-
+'''
           if old not in s:
-              raise SystemExit("extracting block pattern not found")
+              raise SystemExit("extracting screen pattern not found")
+          s = s.replace(old, new, 1)
+
+          old = '''            ok = ExtractZip("sdmc:/slaunch_update.zip");
+            remove("sdmc:/slaunch_update.zip");
+'''
+          new = '''            ok = ExtractZip("sdmc:/slaunch_update.zip");
+            remove("sdmc:/slaunch_update.zip");
+
+            // A failed update returns to the main menu, where Install/Re-install
+            // still needs romfs:/payload. Restore the mount in that case.
+            if (!ok && !romfsMounted)
+                romfsMounted = R_SUCCEEDED(romfsInit());
+'''
+          if old not in s:
+              raise SystemExit("extract/remove pattern not found")
           s = s.replace(old, new, 1)
 
           old = "    romfsExit();\n    return 0;\n"
