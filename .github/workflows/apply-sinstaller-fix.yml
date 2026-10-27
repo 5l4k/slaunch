@@ -19,8 +19,8 @@ jobs:
           fetch-depth: 0
 
       - name: Apply tested RomFS lifecycle fix
-        shell: python
         run: |
+          python3 - <<'PY'
           from pathlib import Path
 
           path = Path("projects/sInstaller/source/main.cpp")
@@ -33,33 +33,37 @@ jobs:
           s = s.replace(old, new, 1)
 
           old = '''        if (screen == Screen::Extracting) {
-            ok = ExtractZip("sdmc:/slaunch_update.zip");
-            remove("sdmc:/slaunch_update.zip");
-            // Same reasoning as a fresh Install: a stale disabled-aside copy
-            // would otherwise outlive the update it was disabled before.
-'''
+              ok = ExtractZip("sdmc:/slaunch_update.zip");
+              remove("sdmc:/slaunch_update.zip");
+              // Same reasoning as a fresh Install: a stale disabled-aside copy
+              // would otherwise outlive the update it was disabled before.
+          '''
+          old = old.replace("              ", "            ")
+
           new = '''        if (screen == Screen::Extracting) {
-            // The release zip contains switch/sInstaller/sInstaller.nro. When
-            // this installer is launched from that path, its embedded RomFS
-            // keeps the running NRO open and prevents ExtractZip() from
-            // replacing it. The update path no longer needs romfs:/payload or
-            // the bundled UI assets, so release the mount before extracting.
-            if (romfsMounted) {
-                romfsExit();
-                romfsMounted = false;
-            }
+              // The release zip contains switch/sInstaller/sInstaller.nro. When
+              // this installer is launched from that path, its embedded RomFS
+              // keeps the running NRO open and prevents ExtractZip() from
+              // replacing it. The update path no longer needs romfs:/payload or
+              // the bundled UI assets, so release the mount before extracting.
+              if (romfsMounted) {
+                  romfsExit();
+                  romfsMounted = false;
+              }
 
-            ok = ExtractZip("sdmc:/slaunch_update.zip");
-            remove("sdmc:/slaunch_update.zip");
+              ok = ExtractZip("sdmc:/slaunch_update.zip");
+              remove("sdmc:/slaunch_update.zip");
 
-            // A failed update returns to the main menu, where Install/Re-install
-            // still needs romfs:/payload. Restore the mount in that case.
-            if (!ok && !romfsMounted)
-                romfsMounted = R_SUCCEEDED(romfsInit());
+              // A failed update returns to the main menu, where Install/Re-install
+              // still needs romfs:/payload. Restore the mount in that case.
+              if (!ok && !romfsMounted)
+                  romfsMounted = R_SUCCEEDED(romfsInit());
 
-            // Same reasoning as a fresh Install: a stale disabled-aside copy
-            // would otherwise outlive the update it was disabled before.
-'''
+              // Same reasoning as a fresh Install: a stale disabled-aside copy
+              // would otherwise outlive the update it was disabled before.
+          '''
+          new = new.replace("              ", "            ")
+
           if old not in s:
               raise SystemExit("extracting block pattern not found")
           s = s.replace(old, new, 1)
@@ -71,6 +75,7 @@ jobs:
           s = s.replace(old, new, 1)
 
           path.write_text(s)
+          PY
 
       - name: Commit fix
         run: |
