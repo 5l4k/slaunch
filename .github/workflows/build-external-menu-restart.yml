@@ -1,0 +1,141 @@
+name: Build external menu restart candidate
+
+on:
+  push:
+    branches:
+      - feature/external-menu-restart
+    paths:
+      - ".github/workflows/build-external-menu-restart.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/external-menu-restart
+          fetch-depth: 0
+
+      - name: Install host tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git make zip ca-certificates python3
+
+      - name: Apply external restart interface
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          protocol = Path('libs/sCommon/include/sl/smi/Protocol.hpp')
+          p = protocol.read_text()
+          anchor = '    constexpr const char *PowerErrorPath = "sdmc:/slaunch/config/power_err.txt";\n'
+          addition = anchor + '''\n    // One-shot external recovery request. Tools outside sMenu (for example an\n    // overlay) can create this file when sMenu is unresponsive. sSystem consumes\n    // it and restarts only the menu applet; the console and suspended game stay up.\n    constexpr const char *MenuRestartRequestPath = "sdmc:/slaunch/config/restart_menu.request";\n'''
+          assert anchor in p
+          assert 'MenuRestartRequestPath' not in p
+          p = p.replace(anchor, addition, 1)
+          protocol.write_text(p)
+
+          main = Path('projects/sSystem/source/main.cpp')
+          s = main.read_text()
+
+          old = '''enum class Pending {\n    None, LaunchApp, ResumeApp, OpenAlbum, OpenUserPage, OpenNetConnect,\n    OpenMiiEdit, OpenWebBrowser, OpenControllers, OpenHomebrewMenu,\n    OpenHomebrew, LaunchHomebrewApp, OpenSystemSettings,\n    Reboot, Shutdown, RebootPayload,\n};'''
+          new = '''enum class Pending {\n    None, LaunchApp, ResumeApp, OpenAlbum, OpenUserPage, OpenNetConnect,\n    OpenMiiEdit, OpenWebBrowser, OpenControllers, OpenHomebrewMenu,\n    OpenHomebrew, LaunchHomebrewApp, OpenSystemSettings, RestartMenu,\n    Reboot, Shutdown, RebootPayload,\n};'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          anchor = '''    g_Pending = Pending::OpenHomebrew;\n    return true;\n}\n\n// ---------------------------------------------------------------------------\n// Dispatch one SystemMessage from sMenu\n'''
+          helper = '''    g_Pending = Pending::OpenHomebrew;\n    return true;\n}\n\n// Restart only sMenu while leaving sSystem and any suspended application alive.\n// This is shared by the normal sMenu RestartMenu command and the external\n// recovery request used when sMenu itself is frozen and cannot send SMI.\nstatic void RestartMenuNow(const char *source) {\n    g_Pending = Pending::None;\n\n    // If the holder has already disappeared, restore system foreground before\n    // creating a new library applet. Without this handoff a valid new holder can\n    // remain black because the compositor still has stale foreground state.\n    if (!la::g_MenuRunning) {\n        const Result focus_rc = app::FocusSystem();\n        DaemonLog("menu: %s restart - no holder, FocusSystem rc=0x%x", source, focus_rc);\n        ::LaunchMenu();\n        return;\n    }\n\n    DaemonLog("menu: %s restart - stopping and relaunching sMenu", source);\n    la::StopMenu();\n    ::LaunchMenu();\n}\n\n// Poll the documented one-shot recovery request. The file is removed before\n// acting so a daemon restart or failed relaunch cannot turn one request into a\n// restart loop. A foreground game is intentionally left alone.\nstatic void PollExternalMenuRestart() {\n    struct stat st;\n    if (stat(MenuRestartRequestPath, &st) != 0) return;\n\n    if (remove(MenuRestartRequestPath) != 0) {\n        DaemonLog("menu: external restart request could not be consumed (errno %d)", errno);\n        return;\n    }\n\n    if (!la::g_MenuRunning && app::g_AppRunning && app::g_AppHasFocus) {\n        DaemonLog("menu: external restart ignored while application is foreground");\n        return;\n    }\n\n    RestartMenuNow("external");\n}\n\n// ---------------------------------------------------------------------------\n// Dispatch one SystemMessage from sMenu\n'''
+          assert anchor in s
+          s = s.replace(anchor, helper, 1)
+
+          old = '''        case SystemMessage::RestartMenu:\n        case SystemMessage::TerminateMenu:\n        default:\n            break;'''
+          new = '''        case SystemMessage::RestartMenu:\n            g_Pending = Pending::RestartMenu;\n            break;\n        case SystemMessage::TerminateMenu:\n        default:\n            break;'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          anchor = '''    switch (p) {\n        case Pending::LaunchApp: {'''
+          replacement = '''    switch (p) {\n        case Pending::RestartMenu:\n            RestartMenuNow("menu");\n            break;\n        case Pending::LaunchApp: {'''
+          assert anchor in s
+          s = s.replace(anchor, replacement, 1)
+
+          old = '''        // Before the menu, so a request left behind by a crash or a power cut\n        // cannot be picked up as this boot's first action.\n        hb::LaunchQueue::Reset();\n\n        ::LaunchMenu();\n\n        // qlaunch must never terminate.\n        u32 hb_poll = 0;'''
+          new = '''        // Before the menu, so a request left behind by a crash or a power cut\n        // cannot be picked up as this boot's first action.\n        hb::LaunchQueue::Reset();\n        remove(MenuRestartRequestPath);\n\n        ::LaunchMenu();\n\n        // qlaunch must never terminate.\n        u32 hb_poll = 0;\n        u32 recovery_poll = 0;'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''            // HOME / power-button / sleep messages from Horizon.\n            PumpAppletMessages();\n\n            // A running game exited on its own -> back to the menu.'''
+          new = '''            // HOME / power-button / sleep messages from Horizon.\n            PumpAppletMessages();\n\n            // External recovery request from an overlay or other SD-side tool.\n            // Once per second is responsive enough without stat() on every frame.\n            if (++recovery_poll % 60 == 0)\n                PollExternalMenuRestart();\n\n            // A running game exited on its own -> back to the menu.'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          assert 'FocusSystem rc=0x%x' in s
+          assert 'MenuRestartRequestPath' in s
+          assert 'Pending::RestartMenu' in s
+          main.write_text(s)
+          PY
+
+          git diff --check
+          git diff -- libs/sCommon/include/sl/smi/Protocol.hpp projects/sSystem/source/main.cpp
+
+      - name: Commit public candidate code
+        run: |
+          git config user.name "5l4k"
+          git config user.email "58014287+5l4k@users.noreply.github.com"
+          git add libs/sCommon/include/sl/smi/Protocol.hpp projects/sSystem/source/main.cpp
+          git commit -m "Add external sMenu restart recovery"
+          git push origin HEAD:feature/external-menu-restart
+
+      - name: Build libnx master
+        run: |
+          git clone -q --depth 1 https://github.com/switchbrew/libnx.git /tmp/libnx
+          make -C /tmp/libnx -j2
+          make -C /tmp/libnx/nx install
+
+      - name: Build Atmosphere 1.12.0 libstratosphere
+        run: |
+          git clone -q --depth 1 --branch 1.12.0 https://github.com/Atmosphere-NX/Atmosphere.git /opt/atmosphere
+          make -C /opt/atmosphere/libraries/libstratosphere -j2
+          mkdir -p /opt/devkitpro/AtmosphereLibs/include /opt/devkitpro/AtmosphereLibs/lib
+          for d in /opt/atmosphere/libraries/lib*/include; do [ -d "$d" ] && cp -a "$d"/. /opt/devkitpro/AtmosphereLibs/include/; done
+          cp "$(find /opt/atmosphere/libraries/libstratosphere -type f -name libstratosphere.a | head -1)" /opt/devkitpro/AtmosphereLibs/lib/libstratosphere.a
+
+      - name: Build patched sSystem
+        env:
+          DEVKITPRO: /opt/devkitpro
+        run: |
+          make ssystem DEVKITPRO=/opt/devkitpro LIBNX=/opt/devkitpro/libnx ATMOSPHERE_DIR=/opt/atmosphere
+
+      - name: Package hardware-test candidate
+        run: |
+          mkdir -p out/atmosphere/contents/0100000000001000/exefs
+          cp SdOut/atmosphere/contents/0100000000001000/exefs/main out/atmosphere/contents/0100000000001000/exefs/main
+          cp SdOut/atmosphere/contents/0100000000001000/exefs/main.npdm out/atmosphere/contents/0100000000001000/exefs/main.npdm
+          mkdir -p "out/switch/.packages/sLaunch Control"
+          cat > "out/switch/.packages/sLaunch Control/package.ini" <<'EOF'
+          ;title='sLaunch Control'
+          ;version=1.1.0-rc1
+          ;creator='5l4k'
+          ;about='External recovery control for restarting sMenu without rebooting the console.'
+
+          [Restart sLaunch]
+          ;hold=true
+          touch /slaunch/config/restart_menu.request
+          notify-now 'sLaunch restart requested'
+          EOF
+          (cd out && zip -qr ../slaunch-external-restart-1.1.0-rc1.zip .)
+          sha256sum slaunch-external-restart-1.1.0-rc1.zip
+
+      - name: Upload test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: slaunch-external-restart-1.1.0-rc1
+          path: slaunch-external-restart-1.1.0-rc1.zip
+          if-no-files-found: error
+          retention-days: 7
