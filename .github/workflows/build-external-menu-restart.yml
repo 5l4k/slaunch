@@ -81,16 +81,16 @@ jobs:
           main.write_text(s)
           PY
 
-          git diff --check
-          git diff -- libs/sCommon/include/sl/smi/Protocol.hpp projects/sSystem/source/main.cpp
+          git -C "$GITHUB_WORKSPACE" diff --check
+          git -C "$GITHUB_WORKSPACE" diff -- libs/sCommon/include/sl/smi/Protocol.hpp projects/sSystem/source/main.cpp
 
       - name: Commit public candidate code
         run: |
-          git config user.name "5l4k"
-          git config user.email "58014287+5l4k@users.noreply.github.com"
-          git add libs/sCommon/include/sl/smi/Protocol.hpp projects/sSystem/source/main.cpp
-          git commit -m "Add external sMenu restart recovery"
-          git push origin HEAD:feature/external-menu-restart
+          git -C "$GITHUB_WORKSPACE" config user.name "5l4k"
+          git -C "$GITHUB_WORKSPACE" config user.email "58014287+5l4k@users.noreply.github.com"
+          git -C "$GITHUB_WORKSPACE" add libs/sCommon/include/sl/smi/Protocol.hpp projects/sSystem/source/main.cpp
+          git -C "$GITHUB_WORKSPACE" commit -m "Add external sMenu restart recovery"
+          git -C "$GITHUB_WORKSPACE" push origin HEAD:feature/external-menu-restart
 
       - name: Build libnx master
         run: |
